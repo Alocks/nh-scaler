@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "access-control-allow-origin", "operation": "set", "value": "*" },
+        { "header": "access-control-allow-methods", "operation": "set", "value": "GET, OPTIONS" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "||nhentai.net",
+      "resourceTypes": ["image"]
+    }
+  }
+]
