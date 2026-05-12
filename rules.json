@@ -5,13 +5,12 @@
     "action": {
       "type": "modifyHeaders",
       "responseHeaders": [
-        { "header": "access-control-allow-origin", "operation": "set", "value": "*" },
-        { "header": "access-control-allow-methods", "operation": "set", "value": "GET, OPTIONS" }
+        { "header": "access-control-allow-origin", "operation": "set", "value": "*" }
       ]
     },
     "condition": {
-      "urlFilter": "||nhentai.net",
-      "resourceTypes": ["image"]
+      "regexFilter": "^https?://.*\\.nhentai\\.net/.*",
+      "resourceTypes": ["image", "media", "xmlhttprequest"]
     }
   }
 ]

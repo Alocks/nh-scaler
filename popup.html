@@ -48,6 +48,15 @@
     .preset-option:hover {
       background: #e8e8e8;
     }
+
+    .preset-option.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .preset-option.disabled:hover {
+      background: transparent;
+    }
     
     .preset-option input[type="radio"] {
       margin: 0;
@@ -64,6 +73,69 @@
       font-size: 11px;
       color: #666;
       margin-left: 24px;
+      margin-top: -6px;
+    }
+
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      margin: 14px 0 8px;
+      color: #444;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .tab-strip {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+
+    .tab-pill {
+      flex: 1;
+      text-align: center;
+      font-size: 11px;
+      padding: 6px 4px;
+      border-radius: 999px;
+      background: #e8e8e8;
+      color: #555;
+      border: 1px solid #ddd;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tab-pill.active {
+      background: #4CAF50;
+      color: #fff;
+      border-color: #4CAF50;
+      font-weight: 600;
+    }
+
+    .tab-pill.disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .tab-descriptions {
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    .engine-panel {
+      display: none;
+    }
+
+    .engine-panel.active {
+      display: block;
+    }
+
+    .panel-note {
+      font-size: 11px;
+      color: #666;
+      padding: 8px;
+      background: #fff;
+      border: 1px solid #e2e2e2;
+      border-radius: 4px;
     }
     
     .status {
@@ -80,43 +152,93 @@
 <body>
   <div class="popup-container">
     <div class="title">
-      <span>Upscaler Settings</span>
+      <span>NH Upscaler</span>
     </div>
-    
-    <div class="preset-options">
-      <label class="preset-option">
-        <input type="radio" name="preset" value="S">
-        <span class="preset-label">Fast (SIMPLE_S)</span>
-      </label>
-      <div class="preset-desc">~0.1s per image</div>
-      
-      <label class="preset-option">
-        <input type="radio" name="preset" value="M">
-        <span class="preset-label">Balanced (SIMPLE_M)</span>
-      </label>
-      <div class="preset-desc">~0.2s per image</div>
-      
-      <label class="preset-option">
-        <input type="radio" name="preset" value="L">
-        <span class="preset-label">Quality (SIMPLE_L)</span>
-      </label>
-      <div class="preset-desc">~0.3s per image</div>
-      
-      <label class="preset-option">
-        <input type="radio" name="preset" value="VL">
-        <span class="preset-label">High Quality (SIMPLE_VL)</span>
-      </label>
-      <div class="preset-desc">~0.6s per image</div>
-      
-      <label class="preset-option">
-        <input type="radio" name="preset" value="UL">
-        <span class="preset-label">Best Quality (SIMPLE_UL)</span>
-      </label>
-      <div class="preset-desc">~1.6s+ per image</div>
+    <div class="tab-strip" id="engineTabs">
+      <div class="tab-pill" data-tab="off">OFF</div>
+      <div class="tab-pill" data-tab="webgl">WEBGL</div>
+      <div class="tab-pill" data-tab="webgpu">WEBGPU</div>
     </div>
-    
-    <div class="status">
-    Measurements done on an RTX4070TS
+
+
+    <div id="enginePanel-off" class="engine-panel">
+      <div class="panel-note">Upscaling is disabled. Original images are shown.</div>
+    </div>
+
+    <div id="enginePanel-webgl" class="engine-panel">
+      <div class="preset-options">
+        <label class="preset-option">
+          <input type="radio" name="preset" value="S">
+          <span class="preset-label">Fast</span>
+        </label>
+        <div class="preset-desc">~0.1s per image</div>
+
+        <label class="preset-option">
+          <input type="radio" name="preset" value="M">
+          <span class="preset-label">Balanced</span>
+        </label>
+        <div class="preset-desc">~0.2s per image</div>
+
+        <label class="preset-option">
+          <input type="radio" name="preset" value="L">
+          <span class="preset-label">Quality</span>
+        </label>
+        <div class="preset-desc">~0.3s per image</div>
+
+        <label class="preset-option">
+          <input type="radio" name="preset" value="VL">
+          <span class="preset-label">High Quality</span>
+        </label>
+        <div class="preset-desc">~0.6s per image</div>
+
+        <label class="preset-option">
+          <input type="radio" name="preset" value="UL">
+          <span class="preset-label">Best Quality</span>
+        </label>
+        <div class="preset-desc">~1.6s+ per image</div>
+      </div>
+      <div class="status">
+      Measurements done on an RTX4070TS
+      </div>
+    </div>
+
+    <div id="enginePanel-webgpu" class="engine-panel">
+      <div class="preset-options">
+        <label class="preset-option">
+          <input type="radio" name="webgpuModel" value="ModeA">
+          <span class="preset-label">Fast Sharp</span>
+        </label>
+        <div class="preset-desc">~0.2s per image</div>
+        <label class="preset-option">
+          <input type="radio" name="webgpuModel" value="ModeAA">
+          <span class="preset-label">Quality Sharp</span>
+        </label>
+        <div class="preset-desc">~0.5s per image</div>
+        <label class="preset-option">
+          <input type="radio" name="webgpuModel" value="ModeB">
+          <span class="preset-label">Fast Clean</span>
+        </label>
+        <div class="preset-desc">~0.2s per image</div>
+        <label class="preset-option">
+          <input type="radio" name="webgpuModel" value="ModeBB">
+          <span class="preset-label">Quality Clean</span>
+        </label>
+        <div class="preset-desc">~0.4s per image</div>
+        
+        <label class="preset-option">
+          <input type="radio" name="webgpuModel" value="ModeC">
+          <span class="preset-label">Fast Denoise</span>
+        </label>
+        <div class="preset-desc">~0.15s per image</div>
+        <label class="preset-option">
+          <input type="radio" name="webgpuModel" value="ModeCA">
+          <span class="preset-label">Quality Denoise</span>
+        </label>
+        <div class="preset-desc">~0.32s per image</div>
+      </div>
+      <div class="status">
+      Measurements done on an RTX4070TS
+      </div>
     </div>
   </div>
   

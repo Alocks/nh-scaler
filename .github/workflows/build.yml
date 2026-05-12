@@ -1,0 +1,103 @@
+name: Build Extension CRX
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for new commits
+        id: commit_check
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous release tag found; continuing."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PREV_TAG_COMMIT=$(git rev-list -n 1 "$PREV_TAG")
+          HEAD_COMMIT=$(git rev-parse HEAD)
+
+          if [ "$PREV_TAG_COMMIT" = "$HEAD_COMMIT" ]; then
+            echo "No new commits since $PREV_TAG; skipping build."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        if: steps.commit_check.outputs.should_build == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Get anime4K-webgpu package
+        if: steps.commit_check.outputs.should_build == 'true'
+        run: npm install anime4k-webgpu
+
+      - name: Build Anime4K.js and prepare for CRX Build
+        if: steps.commit_check.outputs.should_build == 'true'
+        run: |
+          git clone https://github.com/monyone/Anime4K.js temp_anime4k
+          cd temp_anime4k && yarn install && yarn build
+          cd ..
+          mkdir extension_root
+          rsync -rv --exclude='temp_anime4k' --exclude='extension_root' --exclude='.git' --exclude='.github' . extension_root/
+          mkdir -p extension_root/node_modules/anime4k-webgl
+          cp -r temp_anime4k/dist/* extension_root/node_modules/anime4k-webgl
+          rm -rf temp_anime4k
+
+      - name: Install Chrome
+        if: steps.commit_check.outputs.should_build == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: Pack Extension (CRX)
+        if: steps.commit_check.outputs.should_build == 'true'
+        env:
+          EXTENSION_KEY: ${{ secrets.PEM }}
+        run: |
+          echo "$EXTENSION_KEY" > key.pem
+          google-chrome --headless --pack-extension=extension_root --pack-extension-key=key.pem
+          mv extension_root.crx nh-scaler.crx
+
+      - name: Generate release notes
+        if: steps.commit_check.outputs.should_build == 'true'
+        id: release_notes
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log "$PREV_TAG..HEAD" --pretty=format:"- %s" --no-merges)
+          else
+            COMMITS=$(git log --pretty=format:"- %s" --no-merges)
+          fi
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        if: steps.commit_check.outputs.should_build == 'true' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v1.0.${{ github.run_number }}"
+          files: nh-scaler.crx
+          body: |
+            Build #${{ github.run_number }}
+
+            ${{ steps.release_notes.outputs.commits }}
+          draft: false
+          prerelease: false

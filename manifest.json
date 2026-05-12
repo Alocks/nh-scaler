@@ -3,7 +3,7 @@
   "name": "NH Scaler",
   "version": "1.0",
   "permissions": ["declarativeNetRequest", "storage"],
-  "host_permissions": ["*://*.nhentai.net/*"],
+  "host_permissions": ["*://*.nhentai.net/*", "*://nhentai.net/*"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "NH Scaler"
@@ -16,8 +16,8 @@
     }]
   },
   "content_scripts": [{
-    "matches": ["*://nhentai.net/*"],
-    "js": ["anime4k.js", "content.js"],
+    "matches": ["*://*.nhentai.net/*", "*://nhentai.net/*"],
+    "js": ["./node_modules/anime4k-webgpu/lib/index.js", "./node_modules/anime4k-webgl/anime4k.js", "content.js"],
     "run_at": "document_idle"
   }]
 }

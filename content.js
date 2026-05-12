@@ -40,11 +40,30 @@ let backgroundProcessing = false;
 const seenPerformanceResourceUrls = new Set();
 
 const SIMPLE_PRESET_KEY = 'simplePreset';
+const ENGINE_BACKEND_KEY = 'engineBackend';
+const WEBGPU_MODEL_KEY = 'webgpuModel';
 const DEFAULT_SIMPLE_PRESET = 'M';
+const DEFAULT_ENGINE_BACKEND = 'webgl';
+const DEFAULT_WEBGPU_MODEL = 'ModeA';
 const SIMPLE_PRESET_VALUES = new Set(['S', 'M', 'L', 'UL', 'VL']);
+const ENGINE_BACKEND_VALUES = new Set(['off', 'webgl', 'webgpu']);
+const WEBGPU_MODEL_VALUES = new Set([
+    'ModeA', 'ModeAA', 'ModeB', 'ModeBB', 'ModeC', 'ModeCA'
+]);
 
 let selectedSimplePreset = DEFAULT_SIMPLE_PRESET;
+let selectedEngineBackend = DEFAULT_ENGINE_BACKEND;
+let selectedWebGpuModel = DEFAULT_WEBGPU_MODEL;
 let presetReadyPromise = Promise.resolve();
+let backendReadyPromise = Promise.resolve();
+let webgpuModelReadyPromise = Promise.resolve();
+let backendPreferenceLoaded = false;
+
+let webgpuDevicePromise = null;
+let webgpuRenderPipeline = null;
+let webgpuRenderPipelineFormat = null;
+let webgpuRenderBindGroupLayout = null;
+let webgpuSampler = null;
 
 function isNhentaiGalleryUrl(url) {
     if (typeof url !== 'string') return false;
@@ -69,6 +88,10 @@ function getPageNumberFromUrl(url) {
     return Number.isFinite(page) ? page : null;
 }
 
+function isForegroundTab() {
+    return document.visibilityState === 'visible' && !document.hidden;
+}
+
 function getNextBackgroundQueueIndex() {
     if (backgroundQueue.length === 0) return -1;
 
@@ -90,6 +113,9 @@ function getNextBackgroundQueueIndex() {
 }
 
 function queueBackgroundIfEligible(url, source) {
+    if (!backendPreferenceLoaded) return;
+    if (getEffectiveBackend() === 'off') return;
+    if (!isForegroundTab()) return;
     if (!isNhentaiGalleryUrl(url)) return;
 
     const activeImg = getActiveContainer()?.querySelector('img');
@@ -109,6 +135,16 @@ function normalizeSimplePreset(value) {
     return SIMPLE_PRESET_VALUES.has(normalized) ? normalized : DEFAULT_SIMPLE_PRESET;
 }
 
+function normalizeEngineBackend(value) {
+    const normalized = String(value || '').toLowerCase();
+    return ENGINE_BACKEND_VALUES.has(normalized) ? normalized : DEFAULT_ENGINE_BACKEND;
+}
+
+function normalizeWebGpuModel(value) {
+    const normalized = String(value || '').trim();
+    return WEBGPU_MODEL_VALUES.has(normalized) ? normalized : DEFAULT_WEBGPU_MODEL;
+}
+
 function loadSimplePresetPreference() {
     if (!chrome?.storage?.sync) {
         return Promise.resolve();
@@ -123,7 +159,38 @@ function loadSimplePresetPreference() {
     });
 }
 
+function loadEngineBackendPreference() {
+    if (!chrome?.storage?.sync) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        chrome.storage.sync.get({ [ENGINE_BACKEND_KEY]: DEFAULT_ENGINE_BACKEND }, (result) => {
+            selectedEngineBackend = normalizeEngineBackend(result?.[ENGINE_BACKEND_KEY]);
+            backendPreferenceLoaded = true;
+            log('backend:loaded', { selectedEngineBackend });
+            resolve();
+        });
+    });
+}
+
+function loadWebGpuModelPreference() {
+    if (!chrome?.storage?.sync) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        chrome.storage.sync.get({ [WEBGPU_MODEL_KEY]: DEFAULT_WEBGPU_MODEL }, (result) => {
+            selectedWebGpuModel = normalizeWebGpuModel(result?.[WEBGPU_MODEL_KEY]);
+            log('webgpu-model:loaded', { selectedWebGpuModel });
+            resolve();
+        });
+    });
+}
+
 presetReadyPromise = loadSimplePresetPreference();
+backendReadyPromise = loadEngineBackendPreference();
+webgpuModelReadyPromise = loadWebGpuModelPreference();
 
 function log(label, data = {}) {
     if (!DEBUG) return;
@@ -138,6 +205,24 @@ function hideOriginal(img) {
 function showOriginal(img) {
     img.style.removeProperty('display');
     img.style.removeProperty('visibility');
+}
+
+function disableUpscalingForContainer(container, sourceUrl) {
+    const img = container.querySelector('img');
+    if (img) {
+        showOriginal(img);
+        img.dataset.aiProcessed = 'false';
+        delete img.dataset.aiProcessingSrc;
+    }
+
+    const canvas = container.querySelector('.ai-canvas');
+    if (canvas) {
+        canvas.style.display = 'none';
+        canvas.style.visibility = 'hidden';
+        if (sourceUrl) {
+            canvas.dataset.aiSourceUrl = sourceUrl;
+        }
+    }
 }
 
 function ensureCanvas(parent) {
@@ -184,20 +269,352 @@ function getRestoreUpscalePreset(lib) {
     return lib.ANIME4KJS_EMPTY || [];
 }
 
+function getWebGpuLibrary() {
+    const lib = window['anime4k-webgpu'];
+    return lib && typeof lib === 'object' ? lib : null;
+}
+
+function supportsWebGpuBackend() {
+    if (!navigator?.gpu) return false;
+    const lib = getWebGpuLibrary();
+    if (!lib) return false;
+    return (
+        typeof lib.Anime4K === 'function' ||
+        typeof lib.ModeA === 'function' ||
+        typeof lib.ModeAA === 'function' ||
+        typeof lib.ModeB === 'function' ||
+        typeof lib.ModeBB === 'function' ||
+        typeof lib.ModeC === 'function' ||
+        typeof lib.ModeCA === 'function'
+    );
+}
+
+function getEffectiveBackend() {
+    if (selectedEngineBackend === 'off') {
+        return 'off';
+    }
+    if (selectedEngineBackend === 'webgpu' && supportsWebGpuBackend()) {
+        return 'webgpu';
+    }
+    return 'webgl';
+}
+
+function getWebGpuPresetCtor(lib) {
+    const explicitCtor = lib[selectedWebGpuModel];
+    if (typeof explicitCtor === 'function') {
+        return explicitCtor;
+    }
+
+    const presetByLevel = {
+        S: [lib.ModeC, lib.ModeB, lib.ModeA],
+        M: [lib.ModeB, lib.ModeA, lib.ModeC],
+        L: [lib.ModeA, lib.ModeAA, lib.ModeB],
+        VL: [lib.ModeAA, lib.ModeA, lib.ModeCA],
+        UL: [lib.ModeCA, lib.ModeAA, lib.ModeA]
+    };
+
+    const ordered = presetByLevel[selectedSimplePreset] || [lib.ModeA, lib.ModeB, lib.ModeC];
+    for (const ctor of ordered) {
+        if (typeof ctor === 'function') return ctor;
+    }
+
+    const fallback = [lib.ModeA, lib.ModeAA, lib.ModeB, lib.ModeBB, lib.ModeC, lib.ModeCA];
+    for (const ctor of fallback) {
+        if (typeof ctor === 'function') return ctor;
+    }
+
+    return null;
+}
+
+async function getWebGpuDevice() {
+    if (webgpuDevicePromise) return webgpuDevicePromise;
+
+    webgpuDevicePromise = (async () => {
+        if (!navigator?.gpu) {
+            throw new Error('WebGPU API unavailable in this browser context');
+        }
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+            throw new Error('No WebGPU adapter available');
+        }
+
+        const requiredLimits = {};
+        const adapterLimits = adapter.limits;
+
+        const defaultMaxBufferSize = 268435456; // 256 MiB default in many WebGPU implementations
+        const defaultMaxStorageBufferBindingSize = 134217728; // 128 MiB common default
+
+        if (adapterLimits) {
+            if (
+                typeof adapterLimits.maxBufferSize === 'number' &&
+                Number.isFinite(adapterLimits.maxBufferSize) &&
+                adapterLimits.maxBufferSize > defaultMaxBufferSize
+            ) {
+                requiredLimits.maxBufferSize = adapterLimits.maxBufferSize;
+            }
+
+            if (
+                typeof adapterLimits.maxStorageBufferBindingSize === 'number' &&
+                Number.isFinite(adapterLimits.maxStorageBufferBindingSize) &&
+                adapterLimits.maxStorageBufferBindingSize > defaultMaxStorageBufferBindingSize
+            ) {
+                requiredLimits.maxStorageBufferBindingSize = adapterLimits.maxStorageBufferBindingSize;
+            }
+        }
+
+        try {
+            if (Object.keys(requiredLimits).length > 0) {
+                return await adapter.requestDevice({ requiredLimits });
+            }
+            return await adapter.requestDevice();
+        } catch (err) {
+            // If explicit limits fail on some drivers, retry with default request.
+            return adapter.requestDevice();
+        }
+    })();
+
+    try {
+        return await webgpuDevicePromise;
+    } catch (err) {
+        webgpuDevicePromise = null;
+        throw err;
+    }
+}
+
+function getWebGpuRenderShaderModules(device) {
+    if (!webgpuRenderBindGroupLayout) {
+        webgpuRenderBindGroupLayout = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} }
+            ]
+        });
+    }
+
+    if (!webgpuSampler) {
+        webgpuSampler = device.createSampler({
+            magFilter: 'linear',
+            minFilter: 'linear'
+        });
+    }
+
+    return {
+        bindGroupLayout: webgpuRenderBindGroupLayout,
+        sampler: webgpuSampler,
+        vertexModule: device.createShaderModule({
+            code: `
+@vertex
+fn main(@builtin(vertex_index) vertexIndex : u32) -> @builtin(position) vec4<f32> {
+    var positions = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(1.0, 1.0)
+    );
+    let p = positions[vertexIndex];
+    return vec4<f32>(p, 0.0, 1.0);
+}
+`
+        }),
+        fragmentModule: device.createShaderModule({
+            code: `
+@group(0) @binding(0) var linearSampler : sampler;
+@group(0) @binding(1) var sourceTex : texture_2d<f32>;
+
+@fragment
+fn main(@builtin(position) pos : vec4<f32>) -> @location(0) vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(sourceTex, 0));
+    let uv = pos.xy / dims;
+    return textureSample(sourceTex, linearSampler, uv);
+}
+`
+        })
+    };
+}
+
+function getOrCreateWebGpuRenderPipeline(device, format) {
+    if (webgpuRenderPipeline && webgpuRenderPipelineFormat === format) {
+        return webgpuRenderPipeline;
+    }
+
+    const shader = getWebGpuRenderShaderModules(device);
+    const layout = device.createPipelineLayout({ bindGroupLayouts: [shader.bindGroupLayout] });
+
+    webgpuRenderPipeline = device.createRenderPipeline({
+        layout,
+        vertex: {
+            module: shader.vertexModule,
+            entryPoint: 'main'
+        },
+        fragment: {
+            module: shader.fragmentModule,
+            entryPoint: 'main',
+            targets: [{ format }]
+        },
+        primitive: {
+            topology: 'triangle-list'
+        }
+    });
+    webgpuRenderPipelineFormat = format;
+    return webgpuRenderPipeline;
+}
+
+async function runAnime4KWebGpu(tempImg, canvas) {
+    const lib = getWebGpuLibrary();
+    if (!lib) {
+        throw new Error('anime4k-webgpu runtime is not loaded on window');
+    }
+
+    const device = await getWebGpuDevice();
+    const nativeWidth = tempImg.naturalWidth || tempImg.width;
+    const nativeHeight = tempImg.naturalHeight || tempImg.height;
+    if (!nativeWidth || !nativeHeight) {
+        throw new Error('Invalid source image dimensions for WebGPU');
+    }
+
+    const context = canvas.getContext('webgpu');
+    if (!context) {
+        throw new Error('Failed to acquire WebGPU canvas context');
+    }
+
+    const requestedScale = selectedWebGpuModel === 'GANx4UUL' ? 4 : selectedWebGpuModel === 'GANx3L' ? 3 : 2;
+    const targetWidth = nativeWidth * requestedScale;
+    const targetHeight = nativeHeight * requestedScale;
+
+    const inputTexture = device.createTexture({
+        size: [nativeWidth, nativeHeight, 1],
+        format: 'rgba16float',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING
+    });
+
+    device.queue.copyExternalImageToTexture(
+        { source: tempImg },
+        { texture: inputTexture },
+        [nativeWidth, nativeHeight]
+    );
+
+    const encoder = device.createCommandEncoder();
+
+    let outputTexture = null;
+    let modelUsed = selectedWebGpuModel;
+
+    if (typeof lib.Anime4K === 'function') {
+        const anime = new lib.Anime4K(device, inputTexture);
+        modelUsed = 'Anime4K';
+        outputTexture = device.createTexture({
+            size: [targetWidth, targetHeight, 1],
+            format: 'rgba16float',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING
+        });
+        anime.render(outputTexture, encoder);
+    } else {
+        const presetCtor = getWebGpuPresetCtor(lib);
+        if (!presetCtor) {
+            throw new Error('No compatible anime4k-webgpu preset class is exported');
+        }
+        modelUsed = presetCtor.name || selectedWebGpuModel;
+        const pipeline = new presetCtor({
+            device,
+            inputTexture,
+            nativeDimensions: { width: nativeWidth, height: nativeHeight },
+            targetDimensions: { width: targetWidth, height: targetHeight }
+        });
+
+        if (typeof pipeline.pass !== 'function' || typeof pipeline.getOutputTexture !== 'function') {
+            throw new Error('Invalid anime4k-webgpu pipeline interface');
+        }
+
+        pipeline.pass(encoder);
+        outputTexture = pipeline.getOutputTexture();
+    }
+
+    if (!outputTexture) {
+        throw new Error('anime4k-webgpu did not produce an output texture');
+    }
+
+    canvas.width = outputTexture.width;
+    canvas.height = outputTexture.height;
+
+    const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+    context.configure({
+        device,
+        format: canvasFormat,
+        alphaMode: 'premultiplied'
+    });
+
+    const renderPipeline = getOrCreateWebGpuRenderPipeline(device, canvasFormat);
+    const shader = getWebGpuRenderShaderModules(device);
+    const bindGroup = device.createBindGroup({
+        layout: shader.bindGroupLayout,
+        entries: [
+            { binding: 0, resource: shader.sampler },
+            { binding: 1, resource: outputTexture.createView() }
+        ]
+    });
+
+    const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+            view: context.getCurrentTexture().createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+            loadOp: 'clear',
+            storeOp: 'store'
+        }]
+    });
+    pass.setPipeline(renderPipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(6);
+    pass.end();
+
+    device.queue.submit([encoder.finish()]);
+    await device.queue.onSubmittedWorkDone();
+
+    return modelUsed;
+}
+
+async function runAnime4KWebGl(tempImg, canvas) {
+    const engine = await getScaler();
+    if (!engine.supported) {
+        throw new Error('Anime4KJS WebGL pipeline not supported');
+    }
+    engine.attachSource(tempImg, canvas);
+    engine.upscale();
+    engine.detachSource();
+
+    return `SIMPLE_${selectedSimplePreset}`;
+}
+
+async function upscaleWithSelectedBackend(tempImg, canvas) {
+    const backend = getEffectiveBackend();
+    if (backend === 'webgpu') {
+        try {
+            const model = await runAnime4KWebGpu(tempImg, canvas);
+            return { backend: 'webgpu', model };
+        } catch (err) {
+            log('webgpu:fallback-to-webgl', { error: String(err) });
+        }
+    }
+
+    const model = await runAnime4KWebGl(tempImg, canvas);
+    return { backend: 'webgl', model };
+}
+
 async function getScaler() {
     if (scaler) return scaler;
     if (scalerPromise) return scalerPromise;
 
     scalerPromise = (async () => {
-        await presetReadyPromise;
+        await Promise.all([presetReadyPromise, backendReadyPromise]);
 
         const lib = window.Anime4KJS || window.Anime4K;
         if (!lib) {
-            throw new Error('Anime4KJS not found on window');
+            throw new Error('Anime4KJS WebGL runtime not found on window');
         }
 
         const preset = getRestoreUpscalePreset(lib);
         log('scaler:init', {
+            backend: 'webgl',
             hasImageUpscaler: typeof lib.ImageUpscaler === 'function',
             presetLength: Array.isArray(preset) ? preset.length : null,
             selectedSimplePreset
@@ -248,6 +665,11 @@ function reconcile(container) {
 
     const parent = img.parentElement;
     if (!parent) return;
+
+    if (getEffectiveBackend() === 'off') {
+        disableUpscalingForContainer(container, sourceUrl);
+        return;
+    }
 
     const canvas = parent.querySelector('.ai-canvas');
     if (hasRenderedCanvasForSource(img, canvas, sourceUrl)) {
@@ -317,6 +739,8 @@ ProxyImage.prototype = OriginalImage.prototype;
 window.Image = ProxyImage;
 
 async function preprocessBackgroundImage(sourceUrl) {
+    if (!isForegroundTab()) return;
+
     // Skip if already cached or processing
     if (processedCache.has(sourceUrl)) {
         log('bg-process:skip-cached', { sourceUrl });
@@ -348,11 +772,22 @@ async function preprocessBackgroundImage(sourceUrl) {
 }
 
 async function processBackgroundQueue() {
+    if (!isForegroundTab()) return;
+
+    await Promise.all([backendReadyPromise, webgpuModelReadyPromise]);
+
     if (backgroundProcessing || backgroundQueue.length === 0) return;
+
+    if (getEffectiveBackend() === 'off') {
+        backgroundQueue = [];
+        return;
+    }
     
     backgroundProcessing = true;
     
     while (backgroundQueue.length > 0) {
+        if (!isForegroundTab()) break;
+
         const nextIndex = getNextBackgroundQueueIndex();
         if (nextIndex < 0) break;
         const [sourceUrl] = backgroundQueue.splice(nextIndex, 1);
@@ -377,20 +812,19 @@ async function processBackgroundQueue() {
         try {
             // Check if image is actually loadable
             const tempImg = await loadImageForWebGL(sourceUrl);
-            const engine = await getScaler();
-
-            if (!engine.supported) {
-                throw new Error('Anime4KJS WebGL pipeline not supported');
-            }
 
             // Create a temporary canvas for background processing
             const bgCanvas = document.createElement('canvas');
             const t3 = performance.now();
-            engine.attachSource(tempImg, bgCanvas);
-            engine.upscale();
-            engine.detachSource();
+            const runInfo = await upscaleWithSelectedBackend(tempImg, bgCanvas);
             const t4 = performance.now();
-            log('bg-process:upscale-time', { sourceUrl, page, duration: (t4 - t3).toFixed(2) + 'ms' });
+            log('bg-process:upscale-time', {
+                sourceUrl,
+                page,
+                duration: (t4 - t3).toFixed(2) + 'ms',
+                backend: runInfo.backend,
+                model: runInfo.model
+            });
 
             // Mark this gallery+page as done so CDN subdomain variants are not re-processed
             if (pageKey) processedPageKeys.add(pageKey);
@@ -422,6 +856,8 @@ async function processBackgroundQueue() {
 }
 
 function findAndProcessBackgroundImages() {
+    if (!isForegroundTab()) return;
+
     // Look for images that might be preloaded in the page but not in active container
     const allImages = Array.from(document.querySelectorAll('img[src], img[data-src]'));
     const activeContainer = getActiveContainer();
@@ -466,11 +902,20 @@ function scanPerformanceResources() {
 }
 
 async function processCurrentImage(container) {
+    if (!isForegroundTab()) return;
+
+    await Promise.all([backendReadyPromise, webgpuModelReadyPromise]);
+
     const img = container.querySelector('img');
     if (!img) return;
 
     const sourceUrl = img.currentSrc || img.src;
     if (!sourceUrl) return;
+
+    if (getEffectiveBackend() === 'off') {
+        disableUpscalingForContainer(container, sourceUrl);
+        return;
+    }
 
     const parent = img.parentElement;
     if (!parent) return;
@@ -532,10 +977,7 @@ async function processCurrentImage(container) {
 
     try {
         const t1 = performance.now();
-        const [engine, tempImg] = await Promise.all([
-            getScaler(),
-            loadImageForWebGL(sourceUrl)
-        ]);
+        const tempImg = await loadImageForWebGL(sourceUrl);
         const t2 = performance.now();
         //log('process:load-time', { sourceUrl, page, duration: (t2 - t1).toFixed(2) + 'ms' });
 
@@ -546,16 +988,16 @@ async function processCurrentImage(container) {
             return;
         }
 
-        if (!engine.supported) {
-            throw new Error('Anime4KJS WebGL pipeline not supported');
-        }
-
         const t3 = performance.now();
-        engine.attachSource(tempImg, canvas);
-        engine.upscale();
-        engine.detachSource();
+        const runInfo = await upscaleWithSelectedBackend(tempImg, canvas);
         const t4 = performance.now();
-        log('process:upscale-time', { sourceUrl, page, duration: (t4 - t3).toFixed(2) + 'ms' });
+        log('process:upscale-time', {
+            sourceUrl,
+            page,
+            duration: (t4 - t3).toFixed(2) + 'ms',
+            backend: runInfo.backend,
+            model: runInfo.model,
+        });
 
         // Some builds hide canvas inside detachSource.
         canvas.style.visibility = 'visible';
@@ -732,14 +1174,55 @@ const rootObserver = new MutationObserver((mutations) => {
 
 rootObserver.observe(document.body, { childList: true, subtree: true });
 
+document.addEventListener('visibilitychange', () => {
+    if (!isForegroundTab()) {
+        return;
+    }
+
+    attachContainerObserver();
+    scheduleProcess('visibilitychange');
+    findAndProcessBackgroundImages();
+    scanPerformanceResources();
+    processBackgroundQueue();
+});
+
 if (chrome?.storage?.onChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
-        if (areaName !== 'sync' || !changes[SIMPLE_PRESET_KEY]) return;
+        if (areaName !== 'sync') return;
 
-        const nextPreset = normalizeSimplePreset(changes[SIMPLE_PRESET_KEY].newValue);
-        if (nextPreset === selectedSimplePreset) return;
+        const hasPresetChange = !!changes[SIMPLE_PRESET_KEY];
+        const hasBackendChange = !!changes[ENGINE_BACKEND_KEY];
+        const hasWebGpuModelChange = !!changes[WEBGPU_MODEL_KEY];
+        if (!hasPresetChange && !hasBackendChange && !hasWebGpuModelChange) return;
 
-        selectedSimplePreset = nextPreset;
+        let didChange = false;
+
+        if (hasPresetChange) {
+            const nextPreset = normalizeSimplePreset(changes[SIMPLE_PRESET_KEY].newValue);
+            if (nextPreset !== selectedSimplePreset) {
+                selectedSimplePreset = nextPreset;
+                didChange = true;
+            }
+        }
+
+        if (hasBackendChange) {
+            const nextBackend = normalizeEngineBackend(changes[ENGINE_BACKEND_KEY].newValue);
+            if (nextBackend !== selectedEngineBackend) {
+                selectedEngineBackend = nextBackend;
+                didChange = true;
+            }
+        }
+
+        if (hasWebGpuModelChange) {
+            const nextWebGpuModel = normalizeWebGpuModel(changes[WEBGPU_MODEL_KEY].newValue);
+            if (nextWebGpuModel !== selectedWebGpuModel) {
+                selectedWebGpuModel = nextWebGpuModel;
+                didChange = true;
+            }
+        }
+
+        if (!didChange) return;
+
         scaler = null;
         scalerPromise = null;
         processedCache.clear();
@@ -747,18 +1230,42 @@ if (chrome?.storage?.onChanged) {
         inFlightPageKeys.clear();
         backgroundQueue = [];
 
-        log('preset:changed', { selectedSimplePreset });
+        // Reset processed-state on all tracked images so canvases are re-rendered with the new settings
+        document.querySelectorAll('img[data-ai-processed-src]').forEach((img) => {
+            delete img.dataset.aiProcessed;
+            delete img.dataset.aiProcessedSrc;
+            delete img.dataset.aiProcessingSrc;
+            delete img.dataset.aiJobId;
+        });
+        document.querySelectorAll('.ai-canvas').forEach((canvas) => {
+            canvas.remove();
+        });
+        // Clear seen-URL set so performance-discovered URLs are rediscovered and requeued
+        seenPerformanceResourceUrls.clear();
+
+        log('settings:changed', { selectedSimplePreset, selectedEngineBackend, selectedWebGpuModel });
         scheduleProcess('preset-changed');
+        // Re-scan to requeue background images with the new settings
+        findAndProcessBackgroundImages();
+        scanPerformanceResources();
     });
 }
 
-// Pre-initialize the scaler on script load for faster first-image processing
-getScaler().catch(err => {
-    log('scaler:preinit-failed', { error: String(err) });
-});
+// Pre-initialize the scaler on script load for faster first-image processing.
+// Wait for backend preference so off-mode does not initialize or process on first load.
+backendReadyPromise
+    .then(() => {
+        if (getEffectiveBackend() !== 'webgl') return;
+        return getScaler();
+    })
+    .catch(err => {
+        log('scaler:preinit-failed', { error: String(err) });
+    });
 
 // Periodic safety pass for style flips and SPA container swaps, and background image processing
 setInterval(() => {
+    if (!isForegroundTab()) return;
+
     attachContainerObserver();
     scheduleProcess('interval');
     // Fallback scan in case images were loaded in a way we didn't catch
