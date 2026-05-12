@@ -23,6 +23,26 @@ function getActiveContainer() {
     return document.querySelector('#image-container');
 }
 
+function getQueueDebugData(sourceUrl) {
+    return {
+        sourceUrl,
+        page: getPageNumberFromUrl(sourceUrl),
+        pageKey: getGalleryPageKey(sourceUrl),
+        queueSize: backgroundQueue.length,
+        processedCount: processedPageKeys.size,
+        inFlightCount: inFlightPageKeys.size,
+    };
+}
+
+function logQueueEvent(label, sourceUrl, extra = {}) {
+    log(label, {
+        ...getQueueDebugData(sourceUrl),
+        foreground: isForegroundTab(),
+        backend: backendPreferenceLoaded ? getEffectiveBackend() : 'pending',
+        ...extra,
+    });
+}
+
 function getNextBackgroundQueueIndex() {
     if (backgroundQueue.length === 0) return -1;
 
@@ -44,18 +64,52 @@ function getNextBackgroundQueueIndex() {
 }
 
 function queueBackgroundIfEligible(url, source) {
-    if (!backendPreferenceLoaded) return;
-    if (getEffectiveBackend() === 'off') return;
-    if (!isForegroundTab()) return;
     if (!isNhentaiGalleryUrl(url)) return;
+
+    if (!backendPreferenceLoaded) {
+        logQueueEvent('bg-queue:skip', url, { source, reason: 'backend-pending' });
+        return;
+    }
+
+    if (getEffectiveBackend() === 'off') {
+        logQueueEvent('bg-queue:skip', url, { source, reason: 'backend-off' });
+        return;
+    }
+
+    if (!isForegroundTab()) {
+        logQueueEvent('bg-queue:skip', url, { source, reason: 'tab-hidden' });
+        return;
+    }
 
     const activeImg = getActiveContainer()?.querySelector('img');
     const activeUrl = activeImg?.currentSrc || activeImg?.src;
-    if (url === activeUrl) return;
+    if (url === activeUrl) {
+        logQueueEvent('bg-queue:skip', url, { source, reason: 'active-image' });
+        return;
+    }
     const key = getGalleryPageKey(url);
-    if (key && (processedPageKeys.has(key) || inFlightPageKeys.has(key))) return;
-    if (key && backgroundQueue.some(u => getGalleryPageKey(u) === key)) return;
-    if (hasProcessedCacheEntry(url) || backgroundQueue.includes(url)) return;
+    if (key && processedPageKeys.has(key)) {
+        logQueueEvent('bg-queue:skip', url, { source, reason: 'page-already-processed' });
+        return;
+    }
+    if (key && inFlightPageKeys.has(key)) {
+        logQueueEvent('bg-queue:skip', url, { source, reason: 'page-in-flight' });
+        return;
+    }
+    if (key && backgroundQueue.some(u => getGalleryPageKey(u) === key)) {
+        logQueueEvent('bg-queue:skip', url, { source, reason: 'page-already-queued' });
+        return;
+    }
+    if (hasProcessedCacheEntry(url)) {
+        logQueueEvent('bg-queue:skip', url, { source, reason: 'memory-cache-hit' });
+        return;
+    }
+    if (backgroundQueue.includes(url)) {
+        logQueueEvent('bg-queue:skip', url, { source, reason: 'url-already-queued' });
+        return;
+    }
+
+    logQueueEvent('bg-queue:candidate', url, { source });
     preprocessBackgroundImage(url);
 }
 
@@ -150,6 +204,16 @@ function loadImageForWebGL(sourceUrl) {
     });
 }
 
+function isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent) {
+    const latestSrc = img.currentSrc || img.src;
+    return (
+        img.dataset.aiJobId !== jobId ||
+        latestSrc !== sourceUrl ||
+        !canvas.isConnected ||
+        canvas.parentElement !== parent
+    );
+}
+
 const originalFetch = window.fetch;
 window.fetch = function(...args) {
     const url = args[0];
@@ -196,67 +260,86 @@ ProxyImage.prototype = OriginalImage.prototype;
 window.Image = ProxyImage;
 
 async function preprocessBackgroundImage(sourceUrl) {
-    if (!isForegroundTab()) return;
+    if (!isForegroundTab()) {
+        logQueueEvent('bg-queue:skip', sourceUrl, { reason: 'tab-hidden-before-enqueue' });
+        return;
+    }
 
     if (await getProcessedCacheBlob(sourceUrl)) {
-        log('bg-process:skip-cached', { sourceUrl });
+        logQueueEvent('bg-process:skip-cached', sourceUrl, { cache: 'persistent' });
         return;
     }
 
     if (backgroundQueue.includes(sourceUrl)) {
+        logQueueEvent('bg-queue:skip', sourceUrl, { reason: 'url-already-queued-late' });
         return;
     }
 
     const activeImg = getActiveContainer()?.querySelector('img');
     const activeUrl = activeImg?.currentSrc || activeImg?.src;
     if (sourceUrl === activeUrl) {
-        log('bg-process:skip-foreground', { sourceUrl });
+        logQueueEvent('bg-process:skip-foreground', sourceUrl);
         return;
     }
 
     if (!backgroundQueue.includes(sourceUrl)) {
         backgroundQueue.push(sourceUrl);
+        logQueueEvent('bg-queue:enqueued', sourceUrl);
     }
 
     if (!backgroundProcessing) {
+        log('bg-queue:kickoff', { queueSize: backgroundQueue.length });
         processBackgroundQueue();
     }
 }
 
 async function processBackgroundQueue() {
-    if (!isForegroundTab()) return;
+    if (!isForegroundTab()) {
+        log('bg-queue:paused', { reason: 'tab-hidden', queueSize: backgroundQueue.length });
+        return;
+    }
 
     await Promise.all([backendReadyPromise, webgpuModelReadyPromise]);
 
     if (backgroundProcessing || backgroundQueue.length === 0) return;
 
     if (getEffectiveBackend() === 'off') {
+        log('bg-queue:cleared', { reason: 'backend-off', queueSize: backgroundQueue.length });
         backgroundQueue = [];
         return;
     }
 
     backgroundProcessing = true;
+    log('bg-queue:start', { queueSize: backgroundQueue.length });
 
     while (backgroundQueue.length > 0) {
-        if (!isForegroundTab()) break;
+        if (!isForegroundTab()) {
+            log('bg-queue:paused', { reason: 'tab-hidden-mid-run', queueSize: backgroundQueue.length });
+            break;
+        }
 
         const nextIndex = getNextBackgroundQueueIndex();
         if (nextIndex < 0) break;
         const [sourceUrl] = backgroundQueue.splice(nextIndex, 1);
+        logQueueEvent('bg-queue:dequeued', sourceUrl, { nextIndex });
 
         if (await getProcessedCacheBlob(sourceUrl)) {
+            logQueueEvent('bg-process:skip-cached', sourceUrl, { cache: 'persistent-after-dequeue' });
             continue;
         }
 
         const activeImg = getActiveContainer()?.querySelector('img');
         const activeUrl = activeImg?.currentSrc || activeImg?.src;
         if (sourceUrl === activeUrl) {
-            log('bg-process:skip-now-foreground', { sourceUrl });
+            logQueueEvent('bg-process:skip-now-foreground', sourceUrl);
             continue;
         }
 
         const page = getPageNumberFromUrl(sourceUrl);
         const pageKey = getGalleryPageKey(sourceUrl);
+        if (page == null) {
+            logQueueEvent('bg-process:page-missing', sourceUrl);
+        }
         if (pageKey) inFlightPageKeys.add(pageKey);
 
         try {
@@ -282,6 +365,10 @@ async function processBackgroundQueue() {
             bgCanvas.toBlob((blob) => {
                 if (blob) {
                     setProcessedCacheBlob(sourceUrl, blob);
+                    logQueueEvent('bg-process:cached', sourceUrl, {
+                        width: bgCanvas.width,
+                        height: bgCanvas.height,
+                    });
                 }
             });
         } catch (err) {
@@ -294,6 +381,7 @@ async function processBackgroundQueue() {
     }
 
     backgroundProcessing = false;
+    log('bg-queue:idle', { queueSize: backgroundQueue.length });
 }
 
 function findAndProcessBackgroundImages() {
@@ -401,6 +489,10 @@ async function processCurrentImage(container) {
     img.dataset.aiProcessingSrc = sourceUrl;
     img.dataset.aiProcessed = 'true';
     const page = getPageNumberFromUrl(sourceUrl);
+    if (page == null) {
+        log('process:page-missing', { sourceUrl, pageKey: getGalleryPageKey(sourceUrl), jobId });
+    }
+    log('process:start', { sourceUrl, page, jobId, backend: getEffectiveBackend() });
 
     let canvas = ensureCanvas(parent);
 
@@ -408,8 +500,8 @@ async function processCurrentImage(container) {
         const tempImg = await loadImageForWebGL(sourceUrl);
 
         const latestSrc = img.currentSrc || img.src;
-        if (img.dataset.aiJobId !== jobId || latestSrc !== sourceUrl) {
-            log('process:abort-stale', { sourceUrl, latestSrc, jobId, activeJobId: img.dataset.aiJobId });
+        if (isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent)) {
+            log('process:abort-stale', { sourceUrl, latestSrc, jobId, activeJobId: img.dataset.aiJobId, phase: 'before-upscale' });
             delete img.dataset.aiProcessingSrc;
             return;
         }
@@ -424,6 +516,19 @@ async function processCurrentImage(container) {
             backend: runInfo.backend,
             model: runInfo.model,
         });
+
+        const latestAfterUpscale = img.currentSrc || img.src;
+        if (isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent)) {
+            log('process:abort-stale', {
+                sourceUrl,
+                latestSrc: latestAfterUpscale,
+                jobId,
+                activeJobId: img.dataset.aiJobId,
+                phase: 'after-upscale'
+            });
+            delete img.dataset.aiProcessingSrc;
+            return;
+        }
 
         canvas.style.visibility = 'visible';
         canvas.style.display = 'block';

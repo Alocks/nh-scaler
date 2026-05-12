@@ -1,8 +1,13 @@
 // @ts-nocheck
-const DEBUG = true;
+const DEBUG = false;
+const ALWAYS_LOG_LABELS = new Set([
+    'bg-process:skip-cached',
+    'bg-process:upscale-time',
+    'process:upscale-time'
+]);
 
 function log(label, data = {}) {
-    if (!DEBUG) return;
+    if (!DEBUG && !ALWAYS_LOG_LABELS.has(label)) return;
     console.log('[NH Scaler]', label, { ts: new Date().toISOString(), ...data });
 }
 
