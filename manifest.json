@@ -24,7 +24,11 @@
       "src/runtime/config.js",
       "src/runtime/url-utils.js",
       "src/runtime/cache.js",
+      "src/runtime/adapters/webgl.js",
+      "src/runtime/adapters/webgpu.js",
       "src/runtime/engine.js",
+      "src/runtime/dom.js",
+      "src/runtime/queue.js",
       "src/runtime/orchestrator.js"
     ],
     "run_at": "document_idle"
