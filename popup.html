@@ -139,13 +139,61 @@
     }
     
     .status {
-      margin-top: 12px;
-      padding: 8px;
+      margin-top: 6px;
+      padding: 6px;
       background: #fff;
       border-radius: 4px;
       font-size: 12px;
       color: #666;
       border-left: 3px solid #4CAF50;
+    }
+
+    .cache-actions {
+      margin-top: 4;
+      padding: 10px 1px 1px;
+      border-top: 1px solid #ddd;
+    }
+
+    .action-button {
+      width: 90%;
+      border: 1px solid #d64545;
+      background: #fff;
+      color: #b42323;
+      border-radius: 4px;
+      padding: 7px 1px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+      display: block;
+      margin: 0 auto;
+    }
+
+    .action-button:hover {
+      background: #fff1f1;
+    }
+
+    .action-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .action-status {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #666;
+    }
+
+    .action-status:empty {
+      display: none;
+    }
+
+    .action-status.error {
+      color: #b42323;
+    }
+
+    .action-status.success {
+      color: #1f7a1f;
     }
   </style>
 </head>
@@ -240,7 +288,12 @@
       Measurements done on an RTX4070TS
       </div>
     </div>
+    <div class="cache-actions">
+      <button id="clearCacheButton" class="action-button" type="button">Clear Cached Images</button>
+      <div id="cacheActionStatus" class="action-status"></div>
+    </div>
   </div>
+  
   
   <script src="popup.js"></script>
 </body>

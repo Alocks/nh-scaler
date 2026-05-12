@@ -5,7 +5,50 @@ const WEBGPU_MODEL_KEY = 'webgpuModel';
 const DEFAULT_SIMPLE_PRESET = 'M';
 const DEFAULT_ENGINE_BACKEND = 'webgl';
 const DEFAULT_WEBGPU_MODEL = 'ModeA';
+const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
+const NHENTAI_TAB_URL_PATTERN = /^https?:\/\/(?:[^/]+\.)?nhentai\.net\//i;
 let isWebGpuSupported = true;
+
+const clearCacheButton = document.getElementById('clearCacheButton');
+const cacheActionStatus = document.getElementById('cacheActionStatus');
+
+function setCacheActionStatus(message, tone = '') {
+  if (!cacheActionStatus) return;
+  cacheActionStatus.textContent = message;
+  cacheActionStatus.classList.remove('error', 'success');
+  if (tone) {
+    cacheActionStatus.classList.add(tone);
+  }
+}
+
+function isNhentaiTab(tab) {
+  return typeof tab?.url === 'string' && NHENTAI_TAB_URL_PATTERN.test(tab.url);
+}
+
+async function getActiveTab() {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tabs?.[0] || null;
+}
+
+async function refreshCacheActionAvailability() {
+  if (!clearCacheButton) return;
+
+  try {
+    const activeTab = await getActiveTab();
+    const isEligible = !!activeTab?.id && isNhentaiTab(activeTab);
+    clearCacheButton.disabled = !isEligible;
+
+    if (!isEligible) {
+      setCacheActionStatus('Open an nhentai tab to clear cached images.');
+      return;
+    }
+
+    setCacheActionStatus('');
+  } catch {
+    clearCacheButton.disabled = true;
+    setCacheActionStatus('Could not inspect the active tab.', 'error');
+  }
+}
 
 async function detectWebGpuSupport() {
   if (!navigator?.gpu || typeof navigator.gpu.requestAdapter !== 'function') {
@@ -115,3 +158,39 @@ document.querySelectorAll('input[name="webgpuModel"]').forEach((radio) => {
 
 // Load on popup open
 loadCurrentSettings();
+refreshCacheActionAvailability();
+
+if (clearCacheButton) {
+  clearCacheButton.addEventListener('click', async () => {
+    clearCacheButton.disabled = true;
+    setCacheActionStatus('Clearing cache...');
+
+    try {
+      const activeTab = await getActiveTab();
+      if (!activeTab?.id) {
+        throw new Error('Open an nhentai tab first');
+      }
+
+      if (!isNhentaiTab(activeTab)) {
+        throw new Error('Open an nhentai tab first');
+      }
+
+      const response = await chrome.tabs.sendMessage(activeTab.id, { type: CLEAR_CACHE_MESSAGE_TYPE });
+      if (!response?.ok) {
+        throw new Error(response?.error || 'Cache clear request failed');
+      }
+
+      setCacheActionStatus('Cached images cleared for this tab.', 'success');
+    } catch (error) {
+      const message = String(error?.message || '');
+      setCacheActionStatus(
+        message.includes('Receiving end does not exist')
+          ? 'This tab is not ready yet. Reload the nhentai page and try again.'
+          : error?.message || 'Could not clear cache. Open an nhentai reader tab and try again.',
+        'error'
+      );
+    } finally {
+      refreshCacheActionAvailability();
+    }
+  });
+}

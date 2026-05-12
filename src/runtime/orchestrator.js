@@ -6,6 +6,7 @@ const inFlightPageKeys = new Set();
 let backgroundQueue = [];
 let backgroundProcessing = false;
 const seenPerformanceResourceUrls = new Set();
+const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
 
 function log(label, data = {}) {
     if (typeof window.NHScalerLog === 'function') {
@@ -21,6 +22,15 @@ function isForegroundTab() {
 
 function getActiveContainer() {
     return document.querySelector('#image-container');
+}
+
+function resetProcessedRuntimeState() {
+    processedCache.clear();
+    processedPageKeys.clear();
+    inFlightPageKeys.clear();
+    backgroundQueue = [];
+    backgroundProcessing = false;
+    seenPerformanceResourceUrls.clear();
 }
 
 function getQueueDebugData(sourceUrl) {
@@ -737,10 +747,7 @@ if (chrome?.storage?.onChanged) {
 
         scaler = null;
         scalerPromise = null;
-        processedCache.clear();
-        processedPageKeys.clear();
-        inFlightPageKeys.clear();
-        backgroundQueue = [];
+        resetProcessedRuntimeState();
 
         document.querySelectorAll('img[data-ai-processed-src]').forEach((img) => {
             delete img.dataset.aiProcessed;
@@ -751,12 +758,30 @@ if (chrome?.storage?.onChanged) {
         document.querySelectorAll('.ai-canvas').forEach((canvas) => {
             canvas.remove();
         });
-        seenPerformanceResourceUrls.clear();
 
         log('settings:changed', { selectedSimplePreset, selectedEngineBackend, selectedWebGpuModel });
         scheduleProcess('preset-changed');
         findAndProcessBackgroundImages();
         scanPerformanceResources();
+    });
+}
+
+if (chrome?.runtime?.onMessage) {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        if (message?.type !== CLEAR_CACHE_MESSAGE_TYPE) return;
+
+        (async () => {
+            try {
+                const cleared = await clearProcessedCache();
+                resetProcessedRuntimeState();
+                log('cache:cleared', { cleared });
+                sendResponse({ ok: cleared });
+            } catch (error) {
+                sendResponse({ ok: false, error: String(error) });
+            }
+        })();
+
+        return true;
     });
 }
 

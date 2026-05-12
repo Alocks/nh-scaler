@@ -92,3 +92,19 @@ function hasProcessedCacheEntry(url) {
     const cacheKey = getProcessedCacheKey(url);
     return !!cacheKey && processedCache.has(cacheKey);
 }
+
+async function clearProcessedCache() {
+    processedCache.clear();
+
+    const db = await openProcessedCacheDb();
+    if (!db) return false;
+
+    return new Promise((resolve) => {
+        const tx = db.transaction(PROCESSED_CACHE_STORE_NAME, 'readwrite');
+        const store = tx.objectStore(PROCESSED_CACHE_STORE_NAME);
+        store.clear();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+    });
+}
