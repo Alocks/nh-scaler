@@ -70,22 +70,22 @@ let webgpuSampler = null;
 
 function isNhentaiGalleryUrl(url) {
     if (typeof url !== 'string') return false;
-    // Only match URLs ending with /digits.webp (optionally with query/hash)
-    // Example: https://i3.nhentai.net/galleries/3927153/6.webp
-    return /\/\d+\.webp([?#].*)?$/.test(url);
+    // Match gallery images ending with /digits.<ext> (optionally with query/hash)
+    // Example: https://i3.nhentai.net/galleries/3927153/6.jpg
+    return /\/\d+\.(?:webp|jpe?g|png)([?#].*)?$/i.test(url);
 }
 
 // Returns a stable dedup key like "3928680/4" regardless of CDN subdomain (i1/i2/i3)
 function getGalleryPageKey(url) {
     if (typeof url !== 'string') return null;
-    const match = url.match(/\/galleries\/(\d+)\/(\d+)\.webp/);
+    const match = url.match(/\/galleries\/(\d+)\/(\d+)\.(?:webp|jpe?g|png)/i);
     if (!match) return null;
     return `${match[1]}/${match[2]}`;
 }
 
 function getPageNumberFromUrl(url) {
     if (typeof url !== 'string') return null;
-    const match = url.match(/\/(\d+)\.webp(?:[?#].*)?$/);
+    const match = url.match(/\/(\d+)\.(?:webp|jpe?g|png)(?:[?#].*)?$/i);
     if (!match) return null;
     const page = Number(match[1]);
     return Number.isFinite(page) ? page : null;
