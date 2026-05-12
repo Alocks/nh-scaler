@@ -17,7 +17,16 @@
   },
   "content_scripts": [{
     "matches": ["*://*.nhentai.net/*", "*://nhentai.net/*"],
-    "js": ["./node_modules/anime4k-webgpu/lib/index.js", "./node_modules/anime4k-webgl/anime4k.js", "content.js"],
+    "js": [
+      "./node_modules/anime4k-webgpu/lib/index.js",
+      "./node_modules/anime4k-webgl/anime4k.js",
+      "src/runtime/config.js",
+      "src/runtime/url-utils.js",
+      "src/runtime/cache.js",
+      "src/runtime/engine.js",
+      "content.js",
+      "src/runtime/orchestrator.js"
+    ],
     "run_at": "document_idle"
   }]
 }
