@@ -1,9 +1,38 @@
 ﻿// Dispatcher — adapter implementations are in src/runtime/adapters/
 
+const REQUIRED_ADAPTER_METHODS = ['isSupported', 'upscale', 'prewarm', 'reset'];
+
+function getValidatedAdapter(adapterName) {
+    const adapter = window[adapterName];
+    if (!adapter || typeof adapter !== 'object') {
+        throw new Error(`${adapterName} is missing from window`);
+    }
+
+    for (const methodName of REQUIRED_ADAPTER_METHODS) {
+        if (typeof adapter[methodName] !== 'function') {
+            throw new Error(`${adapterName}.${methodName} is not a function`);
+        }
+    }
+
+    return adapter;
+}
+
+function tryGetValidatedAdapter(adapterName) {
+    try {
+        return getValidatedAdapter(adapterName);
+    } catch (error) {
+        runtimeLog('adapter:invalid', { adapterName, error: String(error) });
+        return null;
+    }
+}
+
 function getEffectiveBackend(runtimeSettings = getRuntimePreferenceSnapshot()) {
     const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
     if (settings.selectedEngineBackend === 'off') return 'off';
-    if (settings.selectedEngineBackend === 'webgpu' && window.WebGPUAdapter?.isSupported?.()) return 'webgpu';
+    const webGpuAdapter = tryGetValidatedAdapter('WebGPUAdapter');
+    if (settings.selectedEngineBackend === 'webgpu' && webGpuAdapter && webGpuAdapter.isSupported()) {
+        return 'webgpu';
+    }
     return 'webgl';
 }
 
@@ -12,14 +41,16 @@ async function upscaleWithSelectedBackend(tempImg, canvas, runtimeSettings = get
     const backend = getEffectiveBackend(settings);
     if (backend === 'webgpu') {
         try {
-            const model = await window.WebGPUAdapter.upscale(tempImg, canvas, settings);
+            const webGpuAdapter = getValidatedAdapter('WebGPUAdapter');
+            const model = await webGpuAdapter.upscale(tempImg, canvas, settings);
             return { backend: 'webgpu', model };
         } catch (err) {
             runtimeLog('webgpu:fallback-to-webgl', { error: String(err) });
         }
     }
 
-    const model = await window.WebGLAdapter.upscale(tempImg, canvas, settings);
+    const webGlAdapter = getValidatedAdapter('WebGLAdapter');
+    const model = await webGlAdapter.upscale(tempImg, canvas, settings);
     return { backend: 'webgl', model };
 }
 
@@ -28,21 +59,22 @@ async function prewarmSelectedBackend() {
     const backend = getEffectiveBackend(settings);
     if (backend === 'off') return;
     if (backend === 'webgpu') {
-        if (window.WebGPUAdapter?.prewarm) {
-            await window.WebGPUAdapter.prewarm(settings);
-        }
+        const webGpuAdapter = getValidatedAdapter('WebGPUAdapter');
+        await webGpuAdapter.prewarm(settings);
         return;
     }
-    if (window.WebGLAdapter?.prewarm) {
-        await window.WebGLAdapter.prewarm(settings);
-    }
+    const webGlAdapter = getValidatedAdapter('WebGLAdapter');
+    await webGlAdapter.prewarm(settings);
 }
 
 function resetBackendRuntimeState() {
-    if (window.WebGLAdapter?.reset) {
-        window.WebGLAdapter.reset();
+    const webGlAdapter = tryGetValidatedAdapter('WebGLAdapter');
+    if (webGlAdapter) {
+        webGlAdapter.reset();
     }
-    if (window.WebGPUAdapter?.reset) {
-        window.WebGPUAdapter.reset();
+
+    const webGpuAdapter = tryGetValidatedAdapter('WebGPUAdapter');
+    if (webGpuAdapter) {
+        webGpuAdapter.reset();
     }
 }
