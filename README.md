@@ -16,18 +16,3 @@ Available engines and profiles:
 
 ## After
 <img width="532" height="398" alt="image" src="https://github.com/user-attachments/assets/891cf80f-7c7a-4efd-a2bd-22fd02e89442" />
-
-## Runtime Bundle
-Runtime files under `src/runtime/` are bundled into `src/runtime/runtime.bundle.js`.
-
-Rebuild after runtime source edits:
-
-```bash
-node tools/build-runtime-bundle.mjs
-```
-
-Verify bundle freshness (used by CI):
-
-```bash
-node tools/build-runtime-bundle.mjs --check
-```

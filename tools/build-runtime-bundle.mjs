@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,6 +21,48 @@ const runtimeSourceFiles = [
 const outputFile = 'src/runtime/runtime.bundle.js';
 const shouldCheck = process.argv.includes('--check');
 
+async function listRuntimeSourceFilesOnDisk() {
+  const runtimeDir = resolve(repoRoot, 'src/runtime');
+  const adaptersDir = resolve(runtimeDir, 'adapters');
+
+  const runtimeEntries = await readdir(runtimeDir, { withFileTypes: true });
+  const adapterEntries = await readdir(adaptersDir, { withFileTypes: true });
+
+  const runtimeFiles = runtimeEntries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
+    .map((entry) => `src/runtime/${entry.name}`)
+    .filter((path) => path !== outputFile);
+
+  const adapterFiles = adapterEntries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
+    .map((entry) => `src/runtime/adapters/${entry.name}`);
+
+  return new Set([...runtimeFiles, ...adapterFiles]);
+}
+
+async function verifyRuntimeSourceCoverage() {
+  const listed = new Set(runtimeSourceFiles);
+  const discovered = await listRuntimeSourceFilesOnDisk();
+
+  const missing = [...discovered].filter((filePath) => !listed.has(filePath));
+  const extra = [...listed].filter((filePath) => !discovered.has(filePath));
+
+  if (missing.length === 0 && extra.length === 0) {
+    return;
+  }
+
+  if (missing.length > 0) {
+    process.stderr.write(`Bundle source list is missing runtime files:\n${missing.map((p) => `- ${p}`).join('\n')}\n`);
+  }
+
+  if (extra.length > 0) {
+    process.stderr.write(`Bundle source list contains files not found on disk:\n${extra.map((p) => `- ${p}`).join('\n')}\n`);
+  }
+
+  process.exitCode = 1;
+  throw new Error('Runtime bundle source coverage check failed');
+}
+
 async function composeBundleContent() {
   const parts = [];
   for (const relativePath of runtimeSourceFiles) {
@@ -34,6 +76,7 @@ async function composeBundleContent() {
 }
 
 async function check() {
+  await verifyRuntimeSourceCoverage();
   const expected = await composeBundleContent();
   let current = '';
 
@@ -55,6 +98,7 @@ async function check() {
 }
 
 async function build() {
+  await verifyRuntimeSourceCoverage();
   const output = await composeBundleContent();
   await writeFile(resolve(repoRoot, outputFile), output, 'utf8');
 

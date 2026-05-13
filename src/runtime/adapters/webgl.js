@@ -77,6 +77,14 @@ function resetWebGlAdapterState() {
     scalerPromise = null;
 }
 
+function getWebGlAdapterDiagnostics() {
+    const lib = window.Anime4KJS || window.Anime4K;
+    const capable = !!lib && typeof lib.ImageUpscaler === 'function';
+    const initialized = !!scaler;
+    const isSupported = initialized && scaler.supported === true;
+    return { capable, initialized, isSupported };
+}
+
 // Adapter pattern: WebGL adapter
 window.WebGLAdapter = {
     isSupported: () => {
@@ -96,5 +104,6 @@ window.WebGLAdapter = {
     prewarm: async (runtimeSettings = getRuntimePreferenceSnapshot()) => {
         await getScaler(runtimeSettings);
     },
-    reset: resetWebGlAdapterState
+    reset: resetWebGlAdapterState,
+    getDiagnosticsStatus: getWebGlAdapterDiagnostics
 };

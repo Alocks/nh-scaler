@@ -99,6 +99,23 @@ function resetWebGpuAdapterState() {
     webgpuSampler = null;
 }
 
+function getWebGpuAdapterDiagnostics() {
+    const lib = getWebGpuLibrary();
+    const capable = !!navigator?.gpu && !!lib;
+    const initialized = !!webgpuDevicePromise;
+    const isSupported = capable && (
+        typeof lib?.Anime4K === 'function' ||
+        typeof lib?.ModeA === 'function' ||
+        typeof lib?.ModeAA === 'function' ||
+        typeof lib?.ModeB === 'function' ||
+        typeof lib?.ModeBB === 'function' ||
+        typeof lib?.ModeC === 'function' ||
+        typeof lib?.ModeCA === 'function'
+    );
+
+    return { capable, initialized, isSupported };
+}
+
 function getWebGpuRenderShaderModules(device) {
     if (!webgpuRenderBindGroupLayout) {
         webgpuRenderBindGroupLayout = device.createBindGroupLayout({
@@ -191,7 +208,7 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
         throw new Error('Failed to acquire WebGPU canvas context');
     }
 
-    const requestedScale = 2;
+    const requestedScale = 4;
     const targetWidth = nativeWidth * requestedScale;
     const targetHeight = nativeHeight * requestedScale;
 
@@ -300,5 +317,6 @@ window.WebGPUAdapter = {
     prewarm: async () => {
         await getWebGpuDevice();
     },
-    reset: resetWebGpuAdapterState
+    reset: resetWebGpuAdapterState,
+    getDiagnosticsStatus: getWebGpuAdapterDiagnostics
 };

@@ -124,6 +124,22 @@ function getRuntimeDiagnosticsSnapshot() {
     }
 
     const imageSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    const webGlDiagnostics = typeof window.WebGLAdapter?.getDiagnosticsStatus === 'function'
+        ? window.WebGLAdapter.getDiagnosticsStatus()
+        : {
+            capable: !!window.Anime4KJS || !!window.Anime4K,
+            initialized: false,
+            isSupported: typeof window.WebGLAdapter?.isSupported === 'function' ? !!window.WebGLAdapter.isSupported() : false
+        };
+
+    const webGpuDiagnostics = typeof window.WebGPUAdapter?.getDiagnosticsStatus === 'function'
+        ? window.WebGPUAdapter.getDiagnosticsStatus()
+        : {
+            capable: !!navigator?.gpu,
+            initialized: false,
+            isSupported: typeof window.WebGPUAdapter?.isSupported === 'function' ? !!window.WebGPUAdapter.isSupported() : false
+        };
+
     return {
         generatedAt: Date.now(),
         pageUrl: window.location.href,
@@ -140,11 +156,11 @@ function getRuntimeDiagnosticsSnapshot() {
         adapters: {
             webgl: {
                 exists: !!window.WebGLAdapter,
-                isSupported: typeof window.WebGLAdapter?.isSupported === 'function' ? !!window.WebGLAdapter.isSupported() : false
+                ...webGlDiagnostics
             },
             webgpu: {
                 exists: !!window.WebGPUAdapter,
-                isSupported: typeof window.WebGPUAdapter?.isSupported === 'function' ? !!window.WebGPUAdapter.isSupported() : false
+                ...webGpuDiagnostics
             }
         },
         queue: {

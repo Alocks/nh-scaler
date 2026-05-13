@@ -8,6 +8,7 @@ const DEFAULT_WEBGPU_MODEL = 'ModeA';
 const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
 const GET_DIAGNOSTICS_MESSAGE_TYPE = 'nh-scaler:get-diagnostics';
 const NHENTAI_TAB_URL_PATTERN = /^https?:\/\/(?:[^/]+\.)?nhentai\.net\//i;
+const POPUP_MESSAGE_TIMEOUT_MS = 5000;
 let isWebGpuSupported = true;
 
 const clearCacheButton = document.getElementById('clearCacheButton');
@@ -32,6 +33,25 @@ function setRuntimeDiagnosticsText(text) {
   runtimeDiagnostics.textContent = text;
 }
 
+async function sendMessageWithTimeout(tabId, payload, timeoutMs = POPUP_MESSAGE_TIMEOUT_MS) {
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`Request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  const messagePromise = chrome.tabs.sendMessage(tabId, payload);
+
+  try {
+    return await Promise.race([messagePromise, timeoutPromise]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 function formatRuntimeDiagnostics(diagnostics) {
   if (!diagnostics || typeof diagnostics !== 'object') {
     return 'Diagnostics unavailable.';
@@ -51,7 +71,8 @@ function formatRuntimeDiagnostics(diagnostics) {
     `Preset: ${prefs.selectedSimplePreset || 'unknown'} | WebGPU model: ${prefs.selectedWebGpuModel || 'unknown'}`,
     `Route: ${diagnostics.readerRoute ? 'reader' : 'non-reader'} | Foreground: ${diagnostics.foreground ? 'yes' : 'no'}`,
     `Hooks - fetch: ${hooks.fetch ? 'ok' : 'missing'}, image-src: ${hooks.imageSrc ? 'ok' : 'missing'}, Image(): ${hooks.imageConstructor ? 'ok' : 'missing'}`,
-    `Adapters - WebGL: ${adapters.webgl?.isSupported ? 'supported' : 'unavailable'}, WebGPU: ${adapters.webgpu?.isSupported ? 'supported' : 'unavailable'}`,
+    `Adapters - WebGL: capable=${adapters.webgl?.capable ? 'yes' : 'no'}, initialized=${adapters.webgl?.initialized ? 'yes' : 'no'}, supported=${adapters.webgl?.isSupported ? 'yes' : 'no'}`,
+    `Adapters - WebGPU: capable=${adapters.webgpu?.capable ? 'yes' : 'no'}, initialized=${adapters.webgpu?.initialized ? 'yes' : 'no'}, supported=${adapters.webgpu?.isSupported ? 'yes' : 'no'}`,
     `Queue - size: ${queue.size ?? 0}, in-flight: ${queue.inFlightCount ?? 0}, processed: ${queue.processedCount ?? 0}`
   ].join('\n');
 }
@@ -64,7 +85,7 @@ async function refreshRuntimeDiagnostics() {
   }
 
   try {
-    const response = await chrome.tabs.sendMessage(activeTab.id, { type: GET_DIAGNOSTICS_MESSAGE_TYPE });
+    const response = await sendMessageWithTimeout(activeTab.id, { type: GET_DIAGNOSTICS_MESSAGE_TYPE });
     if (!response?.ok) {
       throw new Error(response?.error || 'Diagnostics request failed');
     }
@@ -230,7 +251,7 @@ if (clearCacheButton) {
         throw new Error('Open an nhentai tab first');
       }
 
-      const response = await chrome.tabs.sendMessage(activeTab.id, { type: CLEAR_CACHE_MESSAGE_TYPE });
+      const response = await sendMessageWithTimeout(activeTab.id, { type: CLEAR_CACHE_MESSAGE_TYPE });
       if (!response?.ok) {
         throw new Error(response?.error || 'Cache clear request failed');
       }

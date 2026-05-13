@@ -480,6 +480,14 @@ function resetWebGlAdapterState() {
     scalerPromise = null;
 }
 
+function getWebGlAdapterDiagnostics() {
+    const lib = window.Anime4KJS || window.Anime4K;
+    const capable = !!lib && typeof lib.ImageUpscaler === 'function';
+    const initialized = !!scaler;
+    const isSupported = initialized && scaler.supported === true;
+    return { capable, initialized, isSupported };
+}
+
 // Adapter pattern: WebGL adapter
 window.WebGLAdapter = {
     isSupported: () => {
@@ -499,7 +507,8 @@ window.WebGLAdapter = {
     prewarm: async (runtimeSettings = getRuntimePreferenceSnapshot()) => {
         await getScaler(runtimeSettings);
     },
-    reset: resetWebGlAdapterState
+    reset: resetWebGlAdapterState,
+    getDiagnosticsStatus: getWebGlAdapterDiagnostics
 };
 // --- END src/runtime/adapters/webgl.js ---
 
@@ -605,6 +614,23 @@ function resetWebGpuAdapterState() {
     webgpuSampler = null;
 }
 
+function getWebGpuAdapterDiagnostics() {
+    const lib = getWebGpuLibrary();
+    const capable = !!navigator?.gpu && !!lib;
+    const initialized = !!webgpuDevicePromise;
+    const isSupported = capable && (
+        typeof lib?.Anime4K === 'function' ||
+        typeof lib?.ModeA === 'function' ||
+        typeof lib?.ModeAA === 'function' ||
+        typeof lib?.ModeB === 'function' ||
+        typeof lib?.ModeBB === 'function' ||
+        typeof lib?.ModeC === 'function' ||
+        typeof lib?.ModeCA === 'function'
+    );
+
+    return { capable, initialized, isSupported };
+}
+
 function getWebGpuRenderShaderModules(device) {
     if (!webgpuRenderBindGroupLayout) {
         webgpuRenderBindGroupLayout = device.createBindGroupLayout({
@@ -697,7 +723,7 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
         throw new Error('Failed to acquire WebGPU canvas context');
     }
 
-    const requestedScale = 2;
+    const requestedScale = 4;
     const targetWidth = nativeWidth * requestedScale;
     const targetHeight = nativeHeight * requestedScale;
 
@@ -806,7 +832,8 @@ window.WebGPUAdapter = {
     prewarm: async () => {
         await getWebGpuDevice();
     },
-    reset: resetWebGpuAdapterState
+    reset: resetWebGpuAdapterState,
+    getDiagnosticsStatus: getWebGpuAdapterDiagnostics
 };
 // --- END src/runtime/adapters/webgpu.js ---
 
@@ -1442,6 +1469,22 @@ function getRuntimeDiagnosticsSnapshot() {
     }
 
     const imageSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    const webGlDiagnostics = typeof window.WebGLAdapter?.getDiagnosticsStatus === 'function'
+        ? window.WebGLAdapter.getDiagnosticsStatus()
+        : {
+            capable: !!window.Anime4KJS || !!window.Anime4K,
+            initialized: false,
+            isSupported: typeof window.WebGLAdapter?.isSupported === 'function' ? !!window.WebGLAdapter.isSupported() : false
+        };
+
+    const webGpuDiagnostics = typeof window.WebGPUAdapter?.getDiagnosticsStatus === 'function'
+        ? window.WebGPUAdapter.getDiagnosticsStatus()
+        : {
+            capable: !!navigator?.gpu,
+            initialized: false,
+            isSupported: typeof window.WebGPUAdapter?.isSupported === 'function' ? !!window.WebGPUAdapter.isSupported() : false
+        };
+
     return {
         generatedAt: Date.now(),
         pageUrl: window.location.href,
@@ -1458,11 +1501,11 @@ function getRuntimeDiagnosticsSnapshot() {
         adapters: {
             webgl: {
                 exists: !!window.WebGLAdapter,
-                isSupported: typeof window.WebGLAdapter?.isSupported === 'function' ? !!window.WebGLAdapter.isSupported() : false
+                ...webGlDiagnostics
             },
             webgpu: {
                 exists: !!window.WebGPUAdapter,
-                isSupported: typeof window.WebGPUAdapter?.isSupported === 'function' ? !!window.WebGPUAdapter.isSupported() : false
+                ...webGpuDiagnostics
             }
         },
         queue: {
