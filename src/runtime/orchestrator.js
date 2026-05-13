@@ -216,11 +216,8 @@ async function processCurrentImage(container) {
             throw new Error('Canvas output is empty after upscale');
         }
 
-        canvas.toBlob((blob) => {
-            if (blob) {
-                setProcessedCacheBlob(sourceUrl, blob);
-            }
-        });
+        const processedBlob = await canvasToBlob(canvas);
+        await setProcessedCacheBlob(sourceUrl, processedBlob);
 
         img.dataset.aiProcessed = 'true';
         img.dataset.aiProcessedSrc = sourceUrl;

@@ -90,3 +90,15 @@ function loadSourceImage(sourceUrl) {
         tempImg.src = sourceUrl;
     });
 }
+
+function canvasToBlob(canvas, type = 'image/png', quality) {
+    return new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+            if (blob) {
+                resolve(blob);
+                return;
+            }
+            reject(new Error('Canvas toBlob returned null'));
+        }, type, quality);
+    });
+}

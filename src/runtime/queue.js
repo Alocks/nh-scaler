@@ -186,14 +186,11 @@ async function processBackgroundQueue() {
                 throw new Error('Canvas output is empty after upscale');
             }
 
-            bgCanvas.toBlob((blob) => {
-                if (blob) {
-                    setProcessedCacheBlob(sourceUrl, blob);
-                    logQueueEvent('bg-process:cached', sourceUrl, {
-                        width: bgCanvas.width,
-                        height: bgCanvas.height,
-                    });
-                }
+            const processedBlob = await canvasToBlob(bgCanvas);
+            await setProcessedCacheBlob(sourceUrl, processedBlob);
+            logQueueEvent('bg-process:cached', sourceUrl, {
+                width: bgCanvas.width,
+                height: bgCanvas.height,
             });
         } catch (err) {
             log('bg-process:error', { sourceUrl, page, error: String(err) });
