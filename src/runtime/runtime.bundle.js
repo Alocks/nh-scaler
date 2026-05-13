@@ -981,6 +981,11 @@ function reconcile(container) {
 
 function loadSourceImage(sourceUrl) {
     return new Promise((resolve, reject) => {
+        if (typeof sourceUrl !== 'string' || !sourceUrl) {
+            reject(new Error(`Invalid source image URL: ${String(sourceUrl)}`));
+            return;
+        }
+
         const tempImg = new Image();
         let settled = false;
         let timeoutId = null;
