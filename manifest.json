@@ -21,15 +21,7 @@
       "./node_modules/anime4k-webgpu/lib/index.js",
       "./node_modules/anime4k-webgl/anime4k.js",
       "content.js",
-      "src/runtime/config.js",
-      "src/runtime/url-utils.js",
-      "src/runtime/cache.js",
-      "src/runtime/adapters/webgl.js",
-      "src/runtime/adapters/webgpu.js",
-      "src/runtime/engine.js",
-      "src/runtime/dom.js",
-      "src/runtime/queue.js",
-      "src/runtime/orchestrator.js"
+      "src/runtime/runtime.bundle.js"
     ],
     "run_at": "document_idle"
   }]
