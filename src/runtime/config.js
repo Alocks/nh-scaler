@@ -43,6 +43,58 @@ function normalizeWebGpuModel(value) {
     return WEBGPU_MODEL_VALUES.has(normalized) ? normalized : DEFAULT_WEBGPU_MODEL;
 }
 
+function getRuntimePreferenceSnapshot() {
+    return {
+        selectedSimplePreset,
+        selectedEngineBackend,
+        selectedWebGpuModel
+    };
+}
+
+function applyRuntimePreferenceStorageChanges(changes) {
+    const hasPresetChange = !!changes[SIMPLE_PRESET_KEY];
+    const hasBackendChange = !!changes[ENGINE_BACKEND_KEY];
+    const hasWebGpuModelChange = !!changes[WEBGPU_MODEL_KEY];
+    if (!hasPresetChange && !hasBackendChange && !hasWebGpuModelChange) {
+        return { didChange: false, changed: { preset: false, backend: false, webgpuModel: false } };
+    }
+
+    let didChange = false;
+
+    if (hasPresetChange) {
+        const nextPreset = normalizeSimplePreset(changes[SIMPLE_PRESET_KEY].newValue);
+        if (nextPreset !== selectedSimplePreset) {
+            selectedSimplePreset = nextPreset;
+            didChange = true;
+        }
+    }
+
+    if (hasBackendChange) {
+        const nextBackend = normalizeEngineBackend(changes[ENGINE_BACKEND_KEY].newValue);
+        if (nextBackend !== selectedEngineBackend) {
+            selectedEngineBackend = nextBackend;
+            didChange = true;
+        }
+    }
+
+    if (hasWebGpuModelChange) {
+        const nextWebGpuModel = normalizeWebGpuModel(changes[WEBGPU_MODEL_KEY].newValue);
+        if (nextWebGpuModel !== selectedWebGpuModel) {
+            selectedWebGpuModel = nextWebGpuModel;
+            didChange = true;
+        }
+    }
+
+    return {
+        didChange,
+        changed: {
+            preset: hasPresetChange,
+            backend: hasBackendChange,
+            webgpuModel: hasWebGpuModelChange
+        }
+    };
+}
+
 function loadSimplePresetPreference() {
     if (!chrome?.storage?.sync) {
         return Promise.resolve();

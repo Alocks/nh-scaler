@@ -105,6 +105,14 @@ async function getWebGpuDevice() {
     }
 }
 
+function resetWebGpuAdapterState() {
+    webgpuDevicePromise = null;
+    webgpuRenderPipeline = null;
+    webgpuRenderPipelineFormat = null;
+    webgpuRenderBindGroupLayout = null;
+    webgpuSampler = null;
+}
+
 function getWebGpuRenderShaderModules(device) {
     if (!webgpuRenderBindGroupLayout) {
         webgpuRenderBindGroupLayout = device.createBindGroupLayout({
@@ -296,5 +304,9 @@ window.WebGPUAdapter = {
             typeof lib.ModeCA === 'function'
         );
     },
-    upscale: runAnime4KWebGpu
+    upscale: runAnime4KWebGpu,
+    prewarm: async () => {
+        await getWebGpuDevice();
+    },
+    reset: resetWebGpuAdapterState
 };

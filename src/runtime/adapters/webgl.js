@@ -70,6 +70,11 @@ async function getScaler() {
     }
 }
 
+function resetWebGlAdapterState() {
+    scaler = null;
+    scalerPromise = null;
+}
+
 // Adapter pattern: WebGL adapter
 window.WebGLAdapter = {
     isSupported: () => {
@@ -84,5 +89,9 @@ window.WebGLAdapter = {
         engine.upscale();
         engine.detachSource();
         return `SIMPLE_${selectedSimplePreset}`;
-    }
+    },
+    prewarm: async () => {
+        await getScaler();
+    },
+    reset: resetWebGlAdapterState
 };

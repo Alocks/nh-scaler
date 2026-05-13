@@ -20,3 +20,26 @@ async function upscaleWithSelectedBackend(tempImg, canvas) {
     const model = await window.WebGLAdapter.upscale(tempImg, canvas);
     return { backend: 'webgl', model };
 }
+
+async function prewarmSelectedBackend() {
+    const backend = getEffectiveBackend();
+    if (backend === 'off') return;
+    if (backend === 'webgpu') {
+        if (window.WebGPUAdapter?.prewarm) {
+            await window.WebGPUAdapter.prewarm();
+        }
+        return;
+    }
+    if (window.WebGLAdapter?.prewarm) {
+        await window.WebGLAdapter.prewarm();
+    }
+}
+
+function resetBackendRuntimeState() {
+    if (window.WebGLAdapter?.reset) {
+        window.WebGLAdapter.reset();
+    }
+    if (window.WebGPUAdapter?.reset) {
+        window.WebGPUAdapter.reset();
+    }
+}

@@ -176,7 +176,7 @@ async function processCurrentImage(container) {
     let canvas = ensureCanvas(parent);
 
     try {
-        const tempImg = await loadImageForWebGL(sourceUrl);
+        const tempImg = await loadSourceImage(sourceUrl);
 
         const latestSrc = img.currentSrc || img.src;
         if (isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent)) {
@@ -381,41 +381,10 @@ if (chrome?.storage?.onChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
         if (areaName !== 'sync') return;
 
-        const hasPresetChange = !!changes[SIMPLE_PRESET_KEY];
-        const hasBackendChange = !!changes[ENGINE_BACKEND_KEY];
-        const hasWebGpuModelChange = !!changes[WEBGPU_MODEL_KEY];
-        if (!hasPresetChange && !hasBackendChange && !hasWebGpuModelChange) return;
+        const changeResult = applyRuntimePreferenceStorageChanges(changes);
+        if (!changeResult.didChange) return;
 
-        let didChange = false;
-
-        if (hasPresetChange) {
-            const nextPreset = normalizeSimplePreset(changes[SIMPLE_PRESET_KEY].newValue);
-            if (nextPreset !== selectedSimplePreset) {
-                selectedSimplePreset = nextPreset;
-                didChange = true;
-            }
-        }
-
-        if (hasBackendChange) {
-            const nextBackend = normalizeEngineBackend(changes[ENGINE_BACKEND_KEY].newValue);
-            if (nextBackend !== selectedEngineBackend) {
-                selectedEngineBackend = nextBackend;
-                didChange = true;
-            }
-        }
-
-        if (hasWebGpuModelChange) {
-            const nextWebGpuModel = normalizeWebGpuModel(changes[WEBGPU_MODEL_KEY].newValue);
-            if (nextWebGpuModel !== selectedWebGpuModel) {
-                selectedWebGpuModel = nextWebGpuModel;
-                didChange = true;
-            }
-        }
-
-        if (!didChange) return;
-
-        scaler = null;
-        scalerPromise = null;
+        resetBackendRuntimeState();
         resetProcessedRuntimeState();
 
         document.querySelectorAll('img[data-ai-processed-src]').forEach((img) => {
@@ -428,7 +397,7 @@ if (chrome?.storage?.onChanged) {
             canvas.remove();
         });
 
-        log('settings:changed', { selectedSimplePreset, selectedEngineBackend, selectedWebGpuModel });
+        log('settings:changed', getRuntimePreferenceSnapshot());
         scheduleProcess('preset-changed');
         findAndProcessBackgroundImages();
         scanPerformanceResources();
@@ -456,8 +425,7 @@ if (chrome?.runtime?.onMessage) {
 
 backendReadyPromise
     .then(() => {
-        if (getEffectiveBackend() !== 'webgl') return;
-        return getScaler();
+        return prewarmSelectedBackend();
     })
     .catch(err => {
         log('scaler:preinit-failed', { error: String(err) });

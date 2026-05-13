@@ -27,6 +27,7 @@ function getNextBackgroundQueueIndex() {
 }
 
 function queueBackgroundIfEligible(url, source) {
+    if (!isNhentaiReaderPageUrl(window.location.href)) return;
     if (!isNhentaiGalleryUrl(url)) return;
 
     if (!backendPreferenceLoaded) {
@@ -77,6 +78,7 @@ function queueBackgroundIfEligible(url, source) {
 }
 
 async function preprocessBackgroundImage(sourceUrl) {
+    if (!isNhentaiReaderPageUrl(window.location.href)) return;
     if (!isForegroundTab()) {
         logQueueEvent('bg-queue:skip', sourceUrl, { reason: 'tab-hidden-before-enqueue' });
         return;
@@ -111,6 +113,11 @@ async function preprocessBackgroundImage(sourceUrl) {
 }
 
 async function processBackgroundQueue() {
+    if (!isNhentaiReaderPageUrl(window.location.href)) {
+        backgroundQueue = [];
+        backgroundProcessing = false;
+        return;
+    }
     if (!isForegroundTab()) {
         log('bg-queue:paused', { reason: 'tab-hidden', queueSize: backgroundQueue.length });
         return;
@@ -160,7 +167,7 @@ async function processBackgroundQueue() {
         if (pageKey) inFlightPageKeys.add(pageKey);
 
         try {
-            const tempImg = await loadImageForWebGL(sourceUrl);
+            const tempImg = await loadSourceImage(sourceUrl);
             const bgCanvas = document.createElement('canvas');
             const t3 = performance.now();
             const runInfo = await upscaleWithSelectedBackend(tempImg, bgCanvas);
@@ -202,6 +209,7 @@ async function processBackgroundQueue() {
 }
 
 function findAndProcessBackgroundImages() {
+    if (!isNhentaiReaderPageUrl(window.location.href)) return;
     if (!isForegroundTab()) return;
 
     const allImages = Array.from(document.querySelectorAll('img[src], img[data-src]'));

@@ -81,7 +81,7 @@ function reconcile(container) {
     }
 }
 
-function loadImageForWebGL(sourceUrl) {
+function loadSourceImage(sourceUrl) {
     return new Promise((resolve, reject) => {
         const tempImg = new Image();
         tempImg.crossOrigin = 'anonymous';

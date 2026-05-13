@@ -2,6 +2,19 @@
 
 const loggedNhentaiParseIssues = new Set();
 
+function parseUrlSafely(url) {
+    if (typeof url !== 'string' || !url) return null;
+    try {
+        return new URL(url, window.location.href);
+    } catch {
+        return null;
+    }
+}
+
+function isNhentaiHost(hostname) {
+    return typeof hostname === 'string' && /(^|\.)nhentai\.net$/i.test(hostname);
+}
+
 function logNhentaiParseIssue(kind, url, extra = {}) {
     if (typeof url !== 'string' || !url) return;
 
@@ -15,19 +28,29 @@ function logNhentaiParseIssue(kind, url, extra = {}) {
 }
 
 function isLikelyNhentaiImageUrl(url) {
-    return typeof url === 'string' && /nhentai\.net/i.test(url) && /\/(?:galleries\/)?\d+/i.test(url);
+    const parsed = parseUrlSafely(url);
+    if (!parsed || !isNhentaiHost(parsed.hostname)) return false;
+    return /^\/galleries\/\d+\/\d+\.(?:webp|jpe?g|png)$/i.test(parsed.pathname);
+}
+
+function isNhentaiReaderPageUrl(url) {
+    const parsed = parseUrlSafely(url);
+    if (!parsed || !isNhentaiHost(parsed.hostname)) return false;
+    return /^\/g\/\d+\/\d+\/?$/i.test(parsed.pathname);
 }
 
 function isNhentaiGalleryUrl(url) {
-    if (typeof url !== 'string') return false;
-    return /\/\d+\.(?:webp|jpe?g|png)([?#].*)?$/i.test(url);
+    const parsed = parseUrlSafely(url);
+    if (!parsed || !isNhentaiHost(parsed.hostname)) return false;
+    return /^\/galleries\/\d+\/\d+\.(?:webp|jpe?g|png)$/i.test(parsed.pathname);
 }
 
 function getGalleryPageKey(url) {
-    if (typeof url !== 'string') return null;
-    const match = url.match(/\/galleries\/(\d+)\/(\d+)\.(?:webp|jpe?g|png)/i);
+    const parsed = parseUrlSafely(url);
+    if (!parsed) return null;
+    const match = parsed.pathname.match(/^\/galleries\/(\d+)\/(\d+)\.(?:webp|jpe?g|png)$/i);
     if (!match) {
-        if (isLikelyNhentaiImageUrl(url) && /\/galleries\//i.test(url)) {
+        if (isLikelyNhentaiImageUrl(url)) {
             logNhentaiParseIssue('gallery-key-miss', url);
         }
         return null;
@@ -36,8 +59,9 @@ function getGalleryPageKey(url) {
 }
 
 function getPageNumberFromUrl(url) {
-    if (typeof url !== 'string') return null;
-    const match = url.match(/\/(\d+)\.(?:webp|jpe?g|png)(?:[?#].*)?$/i);
+    const parsed = parseUrlSafely(url);
+    if (!parsed) return null;
+    const match = parsed.pathname.match(/^\/galleries\/\d+\/(\d+)\.(?:webp|jpe?g|png)$/i);
     if (!match) {
         if (isLikelyNhentaiImageUrl(url)) {
             logNhentaiParseIssue('page-number-miss', url);
