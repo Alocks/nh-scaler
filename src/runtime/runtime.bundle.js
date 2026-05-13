@@ -302,8 +302,14 @@ function openProcessedCacheDb() {
         };
 
         request.onsuccess = () => resolve(request.result);
-        request.onerror = () => resolve(null);
-        request.onblocked = () => resolve(null);
+        request.onerror = () => {
+            runtimeLog('cache:db-open-error', { error: String(request.error) });
+            resolve(null);
+        };
+        request.onblocked = () => {
+            runtimeLog('cache:db-open-blocked');
+            resolve(null);
+        };
     });
 
     return processedCacheDbPromise;
@@ -334,7 +340,10 @@ async function getProcessedCacheBlob(url, runtimeSettings = getRuntimePreference
             resolve(blob);
         };
 
-        request.onerror = () => resolve(null);
+        request.onerror = () => {
+            runtimeLog('cache:db-read-error', { cacheKey, error: String(request.error) });
+            resolve(null);
+        };
     });
 }
 
@@ -352,8 +361,14 @@ async function setProcessedCacheBlob(url, blob, runtimeSettings = getRuntimePref
         const store = tx.objectStore(PROCESSED_CACHE_STORE_NAME);
         store.put({ cacheKey, url, blob, updatedAt: Date.now() });
         tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-        tx.onabort = () => resolve();
+        tx.onerror = () => {
+            runtimeLog('cache:db-write-error', { cacheKey, error: String(tx.error) });
+            resolve();
+        };
+        tx.onabort = () => {
+            runtimeLog('cache:db-write-abort', { cacheKey, error: String(tx.error) });
+            resolve();
+        };
     });
 }
 
@@ -373,8 +388,14 @@ async function clearProcessedCache() {
         const store = tx.objectStore(PROCESSED_CACHE_STORE_NAME);
         store.clear();
         tx.oncomplete = () => resolve(true);
-        tx.onerror = () => resolve(false);
-        tx.onabort = () => resolve(false);
+        tx.onerror = () => {
+            runtimeLog('cache:db-clear-error', { error: String(tx.error) });
+            resolve(false);
+        };
+        tx.onabort = () => {
+            runtimeLog('cache:db-clear-abort', { error: String(tx.error) });
+            resolve(false);
+        };
     });
 }
 // --- END src/runtime/cache.js ---
