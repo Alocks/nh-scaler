@@ -1,0 +1,22 @@
+name: Runtime Bundle Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  bundle-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify runtime bundle is up to date
+        run: node tools/build-runtime-bundle.mjs --check
