@@ -1,6 +1,7 @@
 ﻿// Main orchestrator: listeners, observers, and foreground image processing
 
 const SAFETY_INTERVAL_MS = 1000;
+const BACKGROUND_DISCOVERY_DEBOUNCE_MS = 150;
 
 let jobCounter = 0;
 const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
@@ -250,6 +251,7 @@ function isCanvasOnlyChildListMutation(mutation) {
 let observedContainer = null;
 let containerObserver = null;
 let scheduled = false;
+let backgroundDiscoveryTimeoutId = null;
 
 const scheduleProcess = (reason) => {
     if (scheduled) return;
@@ -266,6 +268,19 @@ const scheduleProcess = (reason) => {
         processCurrentImage(container);
     });
 };
+
+function scheduleBackgroundDiscovery(reason) {
+    if (backgroundDiscoveryTimeoutId !== null) {
+        clearTimeout(backgroundDiscoveryTimeoutId);
+    }
+
+    backgroundDiscoveryTimeoutId = window.setTimeout(() => {
+        backgroundDiscoveryTimeoutId = null;
+        findAndProcessBackgroundImages();
+        scanPerformanceResources();
+        log('bg-discovery:run', { reason });
+    }, BACKGROUND_DISCOVERY_DEBOUNCE_MS);
+}
 
 function attachContainerObserver() {
     const container = getActiveContainer();
@@ -319,7 +334,7 @@ function attachContainerObserver() {
 
         if (shouldProcess) {
             scheduleProcess(reason);
-            findAndProcessBackgroundImages();
+            scheduleBackgroundDiscovery(reason);
         }
     });
 
@@ -335,12 +350,12 @@ function attachContainerObserver() {
         className: container.className
     });
     scheduleProcess('container-attached');
-    findAndProcessBackgroundImages();
+    scheduleBackgroundDiscovery('container-attached');
 }
 
 const rootObserver = new MutationObserver((mutations) => {
     attachContainerObserver();
-    scanPerformanceResources();
+    scheduleBackgroundDiscovery('root-mutation');
 
     for (const mutation of mutations) {
         if (mutation.type === 'childList') {
@@ -369,8 +384,7 @@ document.addEventListener('visibilitychange', () => {
 
     attachContainerObserver();
     scheduleProcess('visibilitychange');
-    findAndProcessBackgroundImages();
-    scanPerformanceResources();
+    scheduleBackgroundDiscovery('visibilitychange');
     processBackgroundQueue();
 });
 
@@ -396,8 +410,7 @@ if (chrome?.storage?.onChanged) {
 
         log('settings:changed', getRuntimePreferenceSnapshot());
         scheduleProcess('preset-changed');
-        findAndProcessBackgroundImages();
-        scanPerformanceResources();
+        scheduleBackgroundDiscovery('preset-changed');
     });
 }
 
@@ -433,10 +446,9 @@ setInterval(() => {
 
     attachContainerObserver();
     scheduleProcess('interval');
-    findAndProcessBackgroundImages();
-    scanPerformanceResources();
+    scheduleBackgroundDiscovery('interval');
 }, SAFETY_INTERVAL_MS);
 
 attachContainerObserver();
 scheduleProcess('initial');
-scanPerformanceResources();
+scheduleBackgroundDiscovery('initial');
