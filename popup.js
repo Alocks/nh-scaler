@@ -6,11 +6,13 @@ const DEFAULT_SIMPLE_PRESET = 'M';
 const DEFAULT_ENGINE_BACKEND = 'webgl';
 const DEFAULT_WEBGPU_MODEL = 'ModeA';
 const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
+const GET_DIAGNOSTICS_MESSAGE_TYPE = 'nh-scaler:get-diagnostics';
 const NHENTAI_TAB_URL_PATTERN = /^https?:\/\/(?:[^/]+\.)?nhentai\.net\//i;
 let isWebGpuSupported = true;
 
 const clearCacheButton = document.getElementById('clearCacheButton');
 const cacheActionStatus = document.getElementById('cacheActionStatus');
+const runtimeDiagnostics = document.getElementById('runtimeDiagnostics');
 
 function setCacheActionStatus(message, tone = '') {
   if (!cacheActionStatus) return;
@@ -23,6 +25,54 @@ function setCacheActionStatus(message, tone = '') {
 
 function isNhentaiTab(tab) {
   return typeof tab?.url === 'string' && NHENTAI_TAB_URL_PATTERN.test(tab.url);
+}
+
+function setRuntimeDiagnosticsText(text) {
+  if (!runtimeDiagnostics) return;
+  runtimeDiagnostics.textContent = text;
+}
+
+function formatRuntimeDiagnostics(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== 'object') {
+    return 'Diagnostics unavailable.';
+  }
+
+  const prefs = diagnostics.preferences || {};
+  const hooks = diagnostics.hooks || {};
+  const queue = diagnostics.queue || {};
+  const adapters = diagnostics.adapters || {};
+
+  return [
+    `Backend: ${prefs.selectedEngineBackend || 'unknown'} (effective: ${diagnostics.effectiveBackend || 'unknown'})`,
+    `Preset: ${prefs.selectedSimplePreset || 'unknown'} | WebGPU model: ${prefs.selectedWebGpuModel || 'unknown'}`,
+    `Route: ${diagnostics.readerRoute ? 'reader' : 'non-reader'} | Foreground: ${diagnostics.foreground ? 'yes' : 'no'}`,
+    `Hooks - fetch: ${hooks.fetch ? 'ok' : 'missing'}, image-src: ${hooks.imageSrc ? 'ok' : 'missing'}, Image(): ${hooks.imageConstructor ? 'ok' : 'missing'}`,
+    `Adapters - WebGL: ${adapters.webgl?.isSupported ? 'supported' : 'unavailable'}, WebGPU: ${adapters.webgpu?.isSupported ? 'supported' : 'unavailable'}`,
+    `Queue - size: ${queue.size ?? 0}, in-flight: ${queue.inFlightCount ?? 0}, processed: ${queue.processedCount ?? 0}`
+  ].join('\n');
+}
+
+async function refreshRuntimeDiagnostics() {
+  const activeTab = await getActiveTab();
+  if (!activeTab?.id || !isNhentaiTab(activeTab)) {
+    setRuntimeDiagnosticsText('Open an nhentai tab to view runtime diagnostics.');
+    return;
+  }
+
+  try {
+    const response = await chrome.tabs.sendMessage(activeTab.id, { type: GET_DIAGNOSTICS_MESSAGE_TYPE });
+    if (!response?.ok) {
+      throw new Error(response?.error || 'Diagnostics request failed');
+    }
+    setRuntimeDiagnosticsText(formatRuntimeDiagnostics(response.diagnostics));
+  } catch (error) {
+    const message = String(error?.message || 'Diagnostics unavailable');
+    setRuntimeDiagnosticsText(
+      message.includes('Receiving end does not exist')
+        ? 'Runtime not ready in this tab yet. Reload the nhentai page.'
+        : `Diagnostics unavailable: ${message}`
+    );
+  }
 }
 
 async function getActiveTab() {
@@ -159,6 +209,7 @@ document.querySelectorAll('input[name="webgpuModel"]').forEach((radio) => {
 // Load on popup open
 loadCurrentSettings();
 refreshCacheActionAvailability();
+refreshRuntimeDiagnostics();
 
 if (clearCacheButton) {
   clearCacheButton.addEventListener('click', async () => {
@@ -191,6 +242,7 @@ if (clearCacheButton) {
       );
     } finally {
       refreshCacheActionAvailability();
+      refreshRuntimeDiagnostics();
     }
   });
 }

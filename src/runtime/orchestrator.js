@@ -9,6 +9,7 @@ const BOOT_DIAGNOSTICS_PHASE_READY = 'ready';
 
 let jobCounter = 0;
 const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
+const GET_DIAGNOSTICS_MESSAGE_TYPE = 'nh-scaler:get-diagnostics';
 
 function log(label, data = {}) {
     if (typeof window.NHScalerLog === 'function') {
@@ -111,6 +112,46 @@ function isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent) {
         !canvas.isConnected ||
         canvas.parentElement !== parent
     );
+}
+
+function getRuntimeDiagnosticsSnapshot() {
+    const preferences = getRuntimePreferenceSnapshot();
+    let effectiveBackend = 'unknown';
+    try {
+        effectiveBackend = getEffectiveBackend(preferences);
+    } catch (error) {
+        effectiveBackend = `error:${String(error)}`;
+    }
+
+    const imageSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    return {
+        preferences,
+        effectiveBackend,
+        readerRoute: isNhentaiReaderPageUrl(window.location.href),
+        foreground: isForegroundTab(),
+        backendPreferenceLoaded,
+        hooks: {
+            fetch: !!window.fetch?.[NH_SCALER_HOOK_MARK],
+            imageConstructor: !!window.Image?.[NH_SCALER_IMAGE_PROXY_MARK],
+            imageSrc: !!imageSrcDescriptor?.set?.[NH_SCALER_HOOK_MARK]
+        },
+        adapters: {
+            webgl: {
+                exists: !!window.WebGLAdapter,
+                isSupported: typeof window.WebGLAdapter?.isSupported === 'function' ? !!window.WebGLAdapter.isSupported() : false
+            },
+            webgpu: {
+                exists: !!window.WebGPUAdapter,
+                isSupported: typeof window.WebGPUAdapter?.isSupported === 'function' ? !!window.WebGPUAdapter.isSupported() : false
+            }
+        },
+        queue: {
+            size: backgroundQueue.length,
+            processing: backgroundProcessing,
+            processedCount: processedPageKeys.size,
+            inFlightCount: inFlightPageKeys.size
+        }
+    };
 }
 
 if (typeof window.fetch === 'function' && !window.fetch[NH_SCALER_HOOK_MARK]) {
@@ -496,6 +537,11 @@ if (chrome?.storage?.onChanged) {
 
 if (chrome?.runtime?.onMessage) {
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        if (message?.type === GET_DIAGNOSTICS_MESSAGE_TYPE) {
+            sendResponse({ ok: true, diagnostics: getRuntimeDiagnosticsSnapshot() });
+            return false;
+        }
+
         if (message?.type !== CLEAR_CACHE_MESSAGE_TYPE) return;
 
         (async () => {
