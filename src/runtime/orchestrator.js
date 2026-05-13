@@ -2,6 +2,8 @@
 
 const SAFETY_INTERVAL_MS = 1000;
 const BACKGROUND_DISCOVERY_DEBOUNCE_MS = 150;
+const NH_SCALER_HOOK_MARK = '__nhScalerHooked__';
+const NH_SCALER_IMAGE_PROXY_MARK = '__nhScalerImageProxy__';
 
 let jobCounter = 0;
 const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
@@ -61,50 +63,65 @@ function isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent) {
     );
 }
 
-const originalFetch = window.fetch;
-window.fetch = function(...args) {
-    const url = args[0];
-    const urlString = typeof url === 'string' ? url : url?.url;
+if (typeof window.fetch === 'function' && !window.fetch[NH_SCALER_HOOK_MARK]) {
+    const originalFetch = window.fetch;
+    const wrappedFetch = function(...args) {
+        const url = args[0];
+        const urlString = typeof url === 'string' ? url : url?.url;
 
-    queueBackgroundIfEligible(urlString, 'fetch');
+        queueBackgroundIfEligible(urlString, 'fetch');
 
-    return originalFetch.apply(this, args);
-};
+        return originalFetch.apply(this, args);
+    };
+    wrappedFetch[NH_SCALER_HOOK_MARK] = true;
+    wrappedFetch.originalFetch = originalFetch;
+    window.fetch = wrappedFetch;
+}
 
 const originalImageProto = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
-if (originalImageProto) {
+if (originalImageProto && typeof originalImageProto.set === 'function' && !originalImageProto.set[NH_SCALER_HOOK_MARK]) {
+    const originalSet = originalImageProto.set;
+    const wrappedSet = function(value) {
+        queueBackgroundIfEligible(value, 'image-src');
+        originalSet.call(this, value);
+    };
+    wrappedSet[NH_SCALER_HOOK_MARK] = true;
+
     Object.defineProperty(HTMLImageElement.prototype, 'src', {
-        set(value) {
-            queueBackgroundIfEligible(value, 'image-src');
-            originalImageProto.set.call(this, value);
-        },
-        get() {
-            return originalImageProto.get.call(this);
-        },
-        configurable: true
+        set: wrappedSet,
+        get: originalImageProto.get,
+        configurable: originalImageProto.configurable,
+        enumerable: originalImageProto.enumerable
     });
 }
 
-const OriginalImage = window.Image;
-function ProxyImage(...args) {
-    const img = new OriginalImage(...args);
-    const srcDescriptor = Object.getOwnPropertyDescriptor(img, 'src') || Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
-    if (srcDescriptor && srcDescriptor.configurable) {
-        Object.defineProperty(img, 'src', {
-            set(value) {
-                queueBackgroundIfEligible(value, 'image-constructor');
-                srcDescriptor.set.call(this, value);
-            },
-            get() {
-                return srcDescriptor.get.call(this);
-            },
-            configurable: true
-        });
+if (typeof window.Image === 'function' && !window.Image[NH_SCALER_IMAGE_PROXY_MARK]) {
+    const OriginalImage = window.Image;
+
+    function ProxyImage(...args) {
+        const img = new OriginalImage(...args);
+        const srcDescriptor = Object.getOwnPropertyDescriptor(img, 'src') || Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+        if (srcDescriptor && srcDescriptor.configurable && typeof srcDescriptor.set === 'function') {
+            Object.defineProperty(img, 'src', {
+                set(value) {
+                    queueBackgroundIfEligible(value, 'image-constructor');
+                    srcDescriptor.set.call(this, value);
+                },
+                get() {
+                    return srcDescriptor.get.call(this);
+                },
+                configurable: true,
+                enumerable: srcDescriptor.enumerable
+            });
+        }
+        return img;
     }
-    return img;
+
+    ProxyImage.prototype = OriginalImage.prototype;
+    ProxyImage[NH_SCALER_IMAGE_PROXY_MARK] = true;
+    ProxyImage.originalImageConstructor = OriginalImage;
+    window.Image = ProxyImage;
 }
-ProxyImage.prototype = OriginalImage.prototype;
-window.Image = ProxyImage;
 
 async function processCurrentImage(container) {
     if (!isForegroundTab()) return;
