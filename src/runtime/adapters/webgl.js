@@ -1,3 +1,5 @@
+// WebGL adapter using anime4k-webgl library
+
 /** @type {any} */
 let scaler = null;
 /** @type {Promise<any> | null} */

@@ -1,3 +1,5 @@
+// Settings constants, preference loaders, and ready promises
+
 const SIMPLE_PRESET_KEY = 'simplePreset';
 const ENGINE_BACKEND_KEY = 'engineBackend';
 const WEBGPU_MODEL_KEY = 'webgpuModel';

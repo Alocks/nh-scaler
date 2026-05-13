@@ -1,3 +1,5 @@
+// URL parsing and nhentai gallery detection with diagnostics
+
 const loggedNhentaiParseIssues = new Set();
 
 function logNhentaiParseIssue(kind, url, extra = {}) {

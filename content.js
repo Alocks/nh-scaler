@@ -1,4 +1,5 @@
-// @ts-nocheck
+// Bootstrap entrypoint: logger setup and CSS injection
+
 const DEBUG = false;
 const ALWAYS_LOG_LABELS = new Set([
     'bg-process:skip-cached',

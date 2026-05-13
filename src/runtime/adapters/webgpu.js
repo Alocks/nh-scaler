@@ -1,3 +1,5 @@
+// WebGPU adapter using anime4k-webgpu library
+
 let webgpuDevicePromise = null;
 let webgpuRenderPipeline = null;
 let webgpuRenderPipelineFormat = null;

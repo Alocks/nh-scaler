@@ -1,4 +1,6 @@
-﻿const SAFETY_INTERVAL_MS = 1000;
+﻿// Main orchestrator: listeners, observers, and foreground image processing
+
+const SAFETY_INTERVAL_MS = 1000;
 
 let jobCounter = 0;
 const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';

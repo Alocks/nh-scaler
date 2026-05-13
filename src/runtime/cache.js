@@ -1,3 +1,5 @@
+// Image processing cache: in-memory Map and IndexedDB persistence
+
 const processedCache = new Map();
 const PROCESSED_CACHE_DB_NAME = 'nh-scaler-processed-cache';
 const PROCESSED_CACHE_STORE_NAME = 'images';
