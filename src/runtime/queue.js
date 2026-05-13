@@ -4,6 +4,7 @@ const processedPageKeys = new Set();
 const inFlightPageKeys = new Set();
 let backgroundQueue = [];
 let backgroundProcessing = false;
+let backgroundQueueRunPromise = null;
 const seenPerformanceResourceUrls = new Set();
 
 function getNextBackgroundQueueIndex() {
@@ -116,6 +117,11 @@ async function preprocessBackgroundImage(sourceUrl) {
 }
 
 async function processBackgroundQueue() {
+    if (backgroundQueueRunPromise) {
+        return backgroundQueueRunPromise;
+    }
+
+    backgroundQueueRunPromise = (async () => {
     if (!isNhentaiReaderPageUrl(window.location.href)) {
         backgroundQueue = [];
         backgroundProcessing = false;
@@ -126,9 +132,13 @@ async function processBackgroundQueue() {
         return;
     }
 
+    if (backgroundProcessing) return;
+
+    backgroundProcessing = true;
+
     await Promise.all([backendReadyPromise, webgpuModelReadyPromise]);
 
-    if (backgroundProcessing || backgroundQueue.length === 0) return;
+    if (backgroundQueue.length === 0) return;
 
     const queueRuntimeSettings = getRuntimePreferenceSnapshot();
     if (getEffectiveBackend(queueRuntimeSettings) === 'off') {
@@ -137,7 +147,6 @@ async function processBackgroundQueue() {
         return;
     }
 
-    backgroundProcessing = true;
     log('bg-queue:start', { queueSize: backgroundQueue.length });
 
     while (backgroundQueue.length > 0) {
@@ -207,8 +216,15 @@ async function processBackgroundQueue() {
         await new Promise(resolve => setTimeout(resolve, 10));
     }
 
-    backgroundProcessing = false;
-    log('bg-queue:idle', { queueSize: backgroundQueue.length });
+    })();
+
+    try {
+        return await backgroundQueueRunPromise;
+    } finally {
+        backgroundProcessing = false;
+        backgroundQueueRunPromise = null;
+        log('bg-queue:idle', { queueSize: backgroundQueue.length });
+    }
 }
 
 function findAndProcessBackgroundImages() {
