@@ -1,9 +1,43 @@
 // Image processing cache: in-memory Map and IndexedDB persistence
 
 const processedCache = new Map();
+const MAX_PROCESSED_CACHE_ENTRIES = 100;
 const PROCESSED_CACHE_DB_NAME = 'nh-scaler-processed-cache';
 const PROCESSED_CACHE_STORE_NAME = 'images';
 let processedCacheDbPromise = null;
+
+function getProcessedCacheEntry(cacheKey) {
+    if (!processedCache.has(cacheKey)) return null;
+
+    const blob = processedCache.get(cacheKey) || null;
+    if (!blob) {
+        processedCache.delete(cacheKey);
+        return null;
+    }
+
+    processedCache.delete(cacheKey);
+    processedCache.set(cacheKey, blob);
+    return blob;
+}
+
+function trimProcessedCacheEntries() {
+    while (processedCache.size > MAX_PROCESSED_CACHE_ENTRIES) {
+        const oldestKey = processedCache.keys().next().value;
+        if (!oldestKey) break;
+        processedCache.delete(oldestKey);
+    }
+}
+
+function rememberProcessedCacheEntry(cacheKey, blob) {
+    if (!cacheKey || !blob) return;
+
+    if (processedCache.has(cacheKey)) {
+        processedCache.delete(cacheKey);
+    }
+
+    processedCache.set(cacheKey, blob);
+    trimProcessedCacheEntries();
+}
 
 function getProcessedCacheSignature() {
     const backend = getEffectiveBackend();
@@ -47,8 +81,9 @@ async function getProcessedCacheBlob(url) {
     const cacheKey = getProcessedCacheKey(url);
     if (!cacheKey) return null;
 
-    if (processedCache.has(cacheKey)) {
-        return processedCache.get(cacheKey);
+    const memoryBlob = getProcessedCacheEntry(cacheKey);
+    if (memoryBlob) {
+        return memoryBlob;
     }
 
     const db = await openProcessedCacheDb();
@@ -62,7 +97,7 @@ async function getProcessedCacheBlob(url) {
         request.onsuccess = () => {
             const blob = request.result?.blob || null;
             if (blob) {
-                processedCache.set(cacheKey, blob);
+                rememberProcessedCacheEntry(cacheKey, blob);
             }
             resolve(blob);
         };
@@ -75,7 +110,7 @@ async function setProcessedCacheBlob(url, blob) {
     const cacheKey = getProcessedCacheKey(url);
     if (!cacheKey || !blob) return;
 
-    processedCache.set(cacheKey, blob);
+    rememberProcessedCacheEntry(cacheKey, blob);
 
     const db = await openProcessedCacheDb();
     if (!db) return;
