@@ -272,6 +272,7 @@ const processedCache = new Map();
 const MAX_PROCESSED_CACHE_ENTRIES = 100;
 const PROCESSED_CACHE_DB_NAME = 'nh-scaler-processed-cache';
 const PROCESSED_CACHE_STORE_NAME = 'images';
+const MIN_VALID_PROCESSED_BLOB_BYTES = 723000;
 let processedCacheDbPromise = null;
 
 function getProcessedCacheEntry(cacheKey) {
@@ -305,6 +306,22 @@ function rememberProcessedCacheEntry(cacheKey, blob) {
 
     processedCache.set(cacheKey, blob);
     trimProcessedCacheEntries();
+}
+
+async function isValidProcessedBlob(blob) {
+    // Guard against tiny/corrupt cache entries before decode validation.
+    if (!(blob instanceof Blob) || blob.size <= MIN_VALID_PROCESSED_BLOB_BYTES) return false;
+
+    try {
+        const bitmap = await createImageBitmap(blob);
+        const isValid = bitmap.width > 0 && bitmap.height > 0;
+        if (typeof bitmap.close === 'function') {
+            bitmap.close();
+        }
+        return isValid;
+    } catch {
+        return false;
+    }
 }
 
 function getProcessedCacheSignature(runtimeSettings = getRuntimePreferenceSnapshot()) {
@@ -352,13 +369,43 @@ function openProcessedCacheDb() {
     return processedCacheDbPromise;
 }
 
+async function deleteProcessedCacheEntryByKey(cacheKey) {
+    if (!cacheKey) return false;
+
+    processedCache.delete(cacheKey);
+
+    const db = await openProcessedCacheDb();
+    if (!db) return true;
+
+    return new Promise((resolve) => {
+        const tx = db.transaction(PROCESSED_CACHE_STORE_NAME, 'readwrite');
+        const store = tx.objectStore(PROCESSED_CACHE_STORE_NAME);
+        store.delete(cacheKey);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => {
+            runtimeLog('cache:db-delete-error', { cacheKey, error: String(tx.error) });
+            resolve(false);
+        };
+        tx.onabort = () => {
+            runtimeLog('cache:db-delete-abort', { cacheKey, error: String(tx.error) });
+            resolve(false);
+        };
+    });
+}
+
 async function getProcessedCacheBlob(url, runtimeSettings = getRuntimePreferenceSnapshot()) {
     const cacheKey = getProcessedCacheKey(url, runtimeSettings);
     if (!cacheKey) return null;
 
     const memoryBlob = getProcessedCacheEntry(cacheKey);
     if (memoryBlob) {
-        return memoryBlob;
+        if (await isValidProcessedBlob(memoryBlob)) {
+            return memoryBlob;
+        }
+
+        await deleteProcessedCacheEntryByKey(cacheKey);
+        runtimeLog('cache:evicted-invalid-memory-blob', { cacheKey, url, size: memoryBlob.size });
+        return null;
     }
 
     const db = await openProcessedCacheDb();
@@ -369,12 +416,22 @@ async function getProcessedCacheBlob(url, runtimeSettings = getRuntimePreference
         const store = tx.objectStore(PROCESSED_CACHE_STORE_NAME);
         const request = store.get(cacheKey);
 
-        request.onsuccess = () => {
+        request.onsuccess = async () => {
             const blob = request.result?.blob || null;
-            if (blob) {
-                rememberProcessedCacheEntry(cacheKey, blob);
+            if (!blob) {
+                resolve(null);
+                return;
             }
-            resolve(blob);
+
+            if (await isValidProcessedBlob(blob)) {
+                rememberProcessedCacheEntry(cacheKey, blob);
+                resolve(blob);
+                return;
+            }
+
+            await deleteProcessedCacheEntryByKey(cacheKey);
+            runtimeLog('cache:evicted-invalid-db-blob', { cacheKey, url, size: blob.size });
+            resolve(null);
         };
 
         request.onerror = () => {
@@ -386,32 +443,52 @@ async function getProcessedCacheBlob(url, runtimeSettings = getRuntimePreference
 
 async function setProcessedCacheBlob(url, blob, runtimeSettings = getRuntimePreferenceSnapshot()) {
     const cacheKey = getProcessedCacheKey(url, runtimeSettings);
-    if (!cacheKey || !blob) return;
+    if (!cacheKey || !blob) return false;
+
+    if (!(await isValidProcessedBlob(blob))) {
+        await deleteProcessedCacheEntryByKey(cacheKey);
+        runtimeLog('cache:skip-invalid-write', { cacheKey, url, size: blob.size });
+        return false;
+    }
 
     rememberProcessedCacheEntry(cacheKey, blob);
 
     const db = await openProcessedCacheDb();
-    if (!db) return;
+    if (!db) return true;
 
     return new Promise((resolve) => {
         const tx = db.transaction(PROCESSED_CACHE_STORE_NAME, 'readwrite');
         const store = tx.objectStore(PROCESSED_CACHE_STORE_NAME);
         store.put({ cacheKey, url, blob, updatedAt: Date.now() });
-        tx.oncomplete = () => resolve();
+        tx.oncomplete = () => resolve(true);
         tx.onerror = () => {
             runtimeLog('cache:db-write-error', { cacheKey, error: String(tx.error) });
-            resolve();
+            resolve(false);
         };
         tx.onabort = () => {
             runtimeLog('cache:db-write-abort', { cacheKey, error: String(tx.error) });
-            resolve();
+            resolve(false);
         };
     });
 }
 
+async function deleteProcessedCacheBlob(url, runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const cacheKey = getProcessedCacheKey(url, runtimeSettings);
+    if (!cacheKey) return false;
+    return deleteProcessedCacheEntryByKey(cacheKey);
+}
+
 function hasProcessedCacheEntry(url, runtimeSettings = getRuntimePreferenceSnapshot()) {
     const cacheKey = getProcessedCacheKey(url, runtimeSettings);
-    return !!cacheKey && processedCache.has(cacheKey);
+    if (!cacheKey || !processedCache.has(cacheKey)) return false;
+
+    const blob = processedCache.get(cacheKey) || null;
+    if (!(blob instanceof Blob) || blob.size <= MIN_VALID_PROCESSED_BLOB_BYTES) {
+        processedCache.delete(cacheKey);
+        return false;
+    }
+
+    return true;
 }
 
 async function clearProcessedCache() {
@@ -1196,8 +1273,12 @@ async function preprocessBackgroundImage(sourceUrl) {
         return;
     }
 
-    if (await getProcessedCacheBlob(sourceUrl, runtimeSettings)) {
-        logQueueEvent('bg-process:skip-cached', sourceUrl, { cache: 'persistent' });
+    const persistedCachedBlob = await getProcessedCacheBlob(sourceUrl, runtimeSettings);
+    if (persistedCachedBlob) {
+        logQueueEvent('bg-process:skip-cached', sourceUrl, {
+            cache: 'persistent',
+            persistedSizeBytes: persistedCachedBlob.size
+        });
         return;
     }
 
@@ -1270,8 +1351,12 @@ async function processBackgroundQueue() {
 
         const itemRuntimeSettings = getRuntimePreferenceSnapshot();
 
-        if (await getProcessedCacheBlob(sourceUrl, itemRuntimeSettings)) {
-            logQueueEvent('bg-process:skip-cached', sourceUrl, { cache: 'persistent-after-dequeue' });
+        const persistedCachedBlob = await getProcessedCacheBlob(sourceUrl, itemRuntimeSettings);
+        if (persistedCachedBlob) {
+            logQueueEvent('bg-process:skip-cached', sourceUrl, {
+                cache: 'persistent-after-dequeue',
+                persistedSizeBytes: persistedCachedBlob.size
+            });
             continue;
         }
 
@@ -1291,6 +1376,12 @@ async function processBackgroundQueue() {
 
         try {
             const tempImg = await loadSourceImage(sourceUrl);
+
+            if (!isForegroundTab()) {
+                logQueueEvent('bg-process:skip-hidden-after-load', sourceUrl);
+                continue;
+            }
+
             const bgCanvas = document.createElement('canvas');
             const t3 = performance.now();
             const runInfo = await upscaleWithSelectedBackend(tempImg, bgCanvas, itemRuntimeSettings);
@@ -1310,6 +1401,12 @@ async function processBackgroundQueue() {
             }
 
             const processedBlob = await canvasToBlob(bgCanvas);
+
+            if (!isForegroundTab()) {
+                logQueueEvent('bg-process:skip-hidden-before-cache', sourceUrl);
+                continue;
+            }
+
             await setProcessedCacheBlob(sourceUrl, processedBlob, itemRuntimeSettings);
             logQueueEvent('bg-process:cached', sourceUrl, {
                 width: bgCanvas.width,
@@ -1489,6 +1586,7 @@ function logQueueEvent(label, sourceUrl, extra = {}) {
 function isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent) {
     const latestSrc = img.currentSrc || img.src;
     return (
+        !isForegroundTab() ||
         img.dataset.aiJobId !== jobId ||
         latestSrc !== sourceUrl ||
         !canvas.isConnected ||
@@ -1668,6 +1766,7 @@ async function processCurrentImage(container) {
             canvas.style.visibility = 'visible';
             return;
         } catch (err) {
+            await deleteProcessedCacheBlob(sourceUrl, runtimeSettings);
             log('process:cache-restore-failed', { sourceUrl, error: String(err) });
         }
     }
@@ -1728,6 +1827,20 @@ async function processCurrentImage(container) {
         }
 
         const processedBlob = await canvasToBlob(canvas);
+
+        if (isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent)) {
+            const latestAfterBlob = img.currentSrc || img.src;
+            log('process:abort-stale', {
+                sourceUrl,
+                latestSrc: latestAfterBlob,
+                jobId,
+                activeJobId: img.dataset.aiJobId,
+                phase: 'before-cache-write'
+            });
+            delete img.dataset.aiProcessingSrc;
+            return;
+        }
+
         await setProcessedCacheBlob(sourceUrl, processedBlob, runtimeSettings);
 
         img.dataset.aiProcessed = 'true';

@@ -88,8 +88,12 @@ async function preprocessBackgroundImage(sourceUrl) {
         return;
     }
 
-    if (await getProcessedCacheBlob(sourceUrl, runtimeSettings)) {
-        logQueueEvent('bg-process:skip-cached', sourceUrl, { cache: 'persistent' });
+    const persistedCachedBlob = await getProcessedCacheBlob(sourceUrl, runtimeSettings);
+    if (persistedCachedBlob) {
+        logQueueEvent('bg-process:skip-cached', sourceUrl, {
+            cache: 'persistent',
+            persistedSizeBytes: persistedCachedBlob.size
+        });
         return;
     }
 
@@ -162,8 +166,12 @@ async function processBackgroundQueue() {
 
         const itemRuntimeSettings = getRuntimePreferenceSnapshot();
 
-        if (await getProcessedCacheBlob(sourceUrl, itemRuntimeSettings)) {
-            logQueueEvent('bg-process:skip-cached', sourceUrl, { cache: 'persistent-after-dequeue' });
+        const persistedCachedBlob = await getProcessedCacheBlob(sourceUrl, itemRuntimeSettings);
+        if (persistedCachedBlob) {
+            logQueueEvent('bg-process:skip-cached', sourceUrl, {
+                cache: 'persistent-after-dequeue',
+                persistedSizeBytes: persistedCachedBlob.size
+            });
             continue;
         }
 
@@ -183,6 +191,12 @@ async function processBackgroundQueue() {
 
         try {
             const tempImg = await loadSourceImage(sourceUrl);
+
+            if (!isForegroundTab()) {
+                logQueueEvent('bg-process:skip-hidden-after-load', sourceUrl);
+                continue;
+            }
+
             const bgCanvas = document.createElement('canvas');
             const t3 = performance.now();
             const runInfo = await upscaleWithSelectedBackend(tempImg, bgCanvas, itemRuntimeSettings);
@@ -202,6 +216,12 @@ async function processBackgroundQueue() {
             }
 
             const processedBlob = await canvasToBlob(bgCanvas);
+
+            if (!isForegroundTab()) {
+                logQueueEvent('bg-process:skip-hidden-before-cache', sourceUrl);
+                continue;
+            }
+
             await setProcessedCacheBlob(sourceUrl, processedBlob, itemRuntimeSettings);
             logQueueEvent('bg-process:cached', sourceUrl, {
                 width: bgCanvas.width,

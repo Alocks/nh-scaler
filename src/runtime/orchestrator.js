@@ -107,6 +107,7 @@ function logQueueEvent(label, sourceUrl, extra = {}) {
 function isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent) {
     const latestSrc = img.currentSrc || img.src;
     return (
+        !isForegroundTab() ||
         img.dataset.aiJobId !== jobId ||
         latestSrc !== sourceUrl ||
         !canvas.isConnected ||
@@ -286,6 +287,7 @@ async function processCurrentImage(container) {
             canvas.style.visibility = 'visible';
             return;
         } catch (err) {
+            await deleteProcessedCacheBlob(sourceUrl, runtimeSettings);
             log('process:cache-restore-failed', { sourceUrl, error: String(err) });
         }
     }
@@ -346,6 +348,20 @@ async function processCurrentImage(container) {
         }
 
         const processedBlob = await canvasToBlob(canvas);
+
+        if (isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent)) {
+            const latestAfterBlob = img.currentSrc || img.src;
+            log('process:abort-stale', {
+                sourceUrl,
+                latestSrc: latestAfterBlob,
+                jobId,
+                activeJobId: img.dataset.aiJobId,
+                phase: 'before-cache-write'
+            });
+            delete img.dataset.aiProcessingSrc;
+            return;
+        }
+
         await setProcessedCacheBlob(sourceUrl, processedBlob, runtimeSettings);
 
         img.dataset.aiProcessed = 'true';
