@@ -1093,7 +1093,7 @@ function queueBackgroundIfEligible(url, source) {
     }
 
     const activeImg = getActiveContainer()?.querySelector('img');
-    const activeUrl = activeImg?.currentSrc || activeImg?.src;
+    const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
     if (url === activeUrl) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'active-image' });
         return;
@@ -1143,7 +1143,7 @@ async function preprocessBackgroundImage(sourceUrl) {
     }
 
     const activeImg = getActiveContainer()?.querySelector('img');
-    const activeUrl = activeImg?.currentSrc || activeImg?.src;
+    const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
     if (sourceUrl === activeUrl) {
         logQueueEvent('bg-process:skip-foreground', sourceUrl);
         return;
@@ -1212,7 +1212,7 @@ async function processBackgroundQueue() {
         }
 
         const activeImg = getActiveContainer()?.querySelector('img');
-        const activeUrl = activeImg?.currentSrc || activeImg?.src;
+        const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
         if (sourceUrl === activeUrl) {
             logQueueEvent('bg-process:skip-now-foreground', sourceUrl);
             continue;
@@ -1278,7 +1278,7 @@ function findAndProcessBackgroundImages() {
     const allImages = Array.from(document.querySelectorAll('img[src], img[data-src]'));
     const activeContainer = getActiveContainer();
     const activeImg = activeContainer?.querySelector('img');
-    const activeUrl = activeImg?.currentSrc || activeImg?.src;
+    const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
 
     let found = 0;
     for (const img of allImages) {
