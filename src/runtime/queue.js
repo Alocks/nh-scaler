@@ -30,12 +30,14 @@ function queueBackgroundIfEligible(url, source) {
     if (!isNhentaiReaderPageUrl(window.location.href)) return;
     if (!isNhentaiGalleryUrl(url)) return;
 
+    const runtimeSettings = getRuntimePreferenceSnapshot();
+
     if (!backendPreferenceLoaded) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'backend-pending' });
         return;
     }
 
-    if (getEffectiveBackend() === 'off') {
+    if (getEffectiveBackend(runtimeSettings) === 'off') {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'backend-off' });
         return;
     }
@@ -64,7 +66,7 @@ function queueBackgroundIfEligible(url, source) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'page-already-queued' });
         return;
     }
-    if (hasProcessedCacheEntry(url)) {
+    if (hasProcessedCacheEntry(url, runtimeSettings)) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'memory-cache-hit' });
         return;
     }
@@ -79,12 +81,13 @@ function queueBackgroundIfEligible(url, source) {
 
 async function preprocessBackgroundImage(sourceUrl) {
     if (!isNhentaiReaderPageUrl(window.location.href)) return;
+    const runtimeSettings = getRuntimePreferenceSnapshot();
     if (!isForegroundTab()) {
         logQueueEvent('bg-queue:skip', sourceUrl, { reason: 'tab-hidden-before-enqueue' });
         return;
     }
 
-    if (await getProcessedCacheBlob(sourceUrl)) {
+    if (await getProcessedCacheBlob(sourceUrl, runtimeSettings)) {
         logQueueEvent('bg-process:skip-cached', sourceUrl, { cache: 'persistent' });
         return;
     }
@@ -127,7 +130,8 @@ async function processBackgroundQueue() {
 
     if (backgroundProcessing || backgroundQueue.length === 0) return;
 
-    if (getEffectiveBackend() === 'off') {
+    const queueRuntimeSettings = getRuntimePreferenceSnapshot();
+    if (getEffectiveBackend(queueRuntimeSettings) === 'off') {
         log('bg-queue:cleared', { reason: 'backend-off', queueSize: backgroundQueue.length });
         backgroundQueue = [];
         return;
@@ -147,7 +151,9 @@ async function processBackgroundQueue() {
         const [sourceUrl] = backgroundQueue.splice(nextIndex, 1);
         logQueueEvent('bg-queue:dequeued', sourceUrl, { nextIndex });
 
-        if (await getProcessedCacheBlob(sourceUrl)) {
+        const itemRuntimeSettings = getRuntimePreferenceSnapshot();
+
+        if (await getProcessedCacheBlob(sourceUrl, itemRuntimeSettings)) {
             logQueueEvent('bg-process:skip-cached', sourceUrl, { cache: 'persistent-after-dequeue' });
             continue;
         }
@@ -170,7 +176,7 @@ async function processBackgroundQueue() {
             const tempImg = await loadSourceImage(sourceUrl);
             const bgCanvas = document.createElement('canvas');
             const t3 = performance.now();
-            const runInfo = await upscaleWithSelectedBackend(tempImg, bgCanvas);
+            const runInfo = await upscaleWithSelectedBackend(tempImg, bgCanvas, itemRuntimeSettings);
             const t4 = performance.now();
             log('bg-process:upscale-time', {
                 sourceUrl,
@@ -187,7 +193,7 @@ async function processBackgroundQueue() {
             }
 
             const processedBlob = await canvasToBlob(bgCanvas);
-            await setProcessedCacheBlob(sourceUrl, processedBlob);
+            await setProcessedCacheBlob(sourceUrl, processedBlob, itemRuntimeSettings);
             logQueueEvent('bg-process:cached', sourceUrl, {
                 width: bgCanvas.width,
                 height: bgCanvas.height,

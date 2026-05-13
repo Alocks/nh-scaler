@@ -117,7 +117,9 @@ async function processCurrentImage(container) {
     const sourceUrl = img.currentSrc || img.src;
     if (!sourceUrl) return;
 
-    if (getEffectiveBackend() === 'off') {
+    const runtimeSettings = getRuntimePreferenceSnapshot();
+
+    if (getEffectiveBackend(runtimeSettings) === 'off') {
         disableUpscalingForContainer(container, sourceUrl);
         return;
     }
@@ -139,7 +141,7 @@ async function processCurrentImage(container) {
         return;
     }
 
-    const cachedBlob = await getProcessedCacheBlob(sourceUrl);
+    const cachedBlob = await getProcessedCacheBlob(sourceUrl, runtimeSettings);
     if (cachedBlob) {
         let canvas = ensureCanvas(parent);
 
@@ -172,7 +174,7 @@ async function processCurrentImage(container) {
     if (page == null) {
         log('process:page-missing', { sourceUrl, pageKey: getGalleryPageKey(sourceUrl), jobId });
     }
-    log('process:start', { sourceUrl, page, jobId, backend: getEffectiveBackend() });
+    log('process:start', { sourceUrl, page, jobId, backend: getEffectiveBackend(runtimeSettings) });
 
     let canvas = ensureCanvas(parent);
 
@@ -187,7 +189,7 @@ async function processCurrentImage(container) {
         }
 
         const t3 = performance.now();
-        const runInfo = await upscaleWithSelectedBackend(tempImg, canvas);
+        const runInfo = await upscaleWithSelectedBackend(tempImg, canvas, runtimeSettings);
         const t4 = performance.now();
         log('process:upscale-time', {
             sourceUrl,
@@ -218,7 +220,7 @@ async function processCurrentImage(container) {
         }
 
         const processedBlob = await canvasToBlob(canvas);
-        await setProcessedCacheBlob(sourceUrl, processedBlob);
+        await setProcessedCacheBlob(sourceUrl, processedBlob, runtimeSettings);
 
         img.dataset.aiProcessed = 'true';
         img.dataset.aiProcessedSrc = sourceUrl;

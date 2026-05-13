@@ -5,7 +5,8 @@ let scaler = null;
 /** @type {Promise<any> | null} */
 let scalerPromise = null;
 
-function getRestoreUpscalePreset(lib) {
+function getRestoreUpscalePreset(lib, runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
     const preferredSimple = {
         S: lib.ANIME4KJS_SIMPLE_S_2X,
         M: lib.ANIME4KJS_SIMPLE_M_2X,
@@ -14,8 +15,8 @@ function getRestoreUpscalePreset(lib) {
         UL: lib.ANIME4KJS_SIMPLE_UL_2X
     };
 
-    if (preferredSimple[selectedSimplePreset]) {
-        return preferredSimple[selectedSimplePreset];
+    if (preferredSimple[settings.selectedSimplePreset]) {
+        return preferredSimple[settings.selectedSimplePreset];
     }
 
     const fallbackOrder = ['M', 'L', 'S', 'UL', 'VL'];
@@ -26,7 +27,8 @@ function getRestoreUpscalePreset(lib) {
     return lib.ANIME4KJS_EMPTY || [];
 }
 
-async function getScaler() {
+async function getScaler(runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
     if (scaler) return scaler;
     if (scalerPromise) return scalerPromise;
 
@@ -38,12 +40,12 @@ async function getScaler() {
             throw new Error('Anime4KJS WebGL runtime not found on window');
         }
 
-        const preset = getRestoreUpscalePreset(lib);
+        const preset = getRestoreUpscalePreset(lib, settings);
         runtimeLog('scaler:init', {
             backend: 'webgl',
             hasImageUpscaler: typeof lib.ImageUpscaler === 'function',
             presetLength: Array.isArray(preset) ? preset.length : null,
-            selectedSimplePreset
+            selectedSimplePreset: settings.selectedSimplePreset
         });
 
         const instance = new lib.ImageUpscaler(preset);
@@ -80,18 +82,19 @@ window.WebGLAdapter = {
     isSupported: () => {
         return scaler && scaler.supported === true;
     },
-    upscale: async (tempImg, canvas) => {
-        const engine = await getScaler();
+    upscale: async (tempImg, canvas, runtimeSettings = getRuntimePreferenceSnapshot()) => {
+        const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
+        const engine = await getScaler(settings);
         if (!engine.supported) {
             throw new Error('Anime4KJS WebGL pipeline not supported');
         }
         engine.attachSource(tempImg, canvas);
         engine.upscale();
         engine.detachSource();
-        return `SIMPLE_${selectedSimplePreset}`;
+        return `SIMPLE_${settings.selectedSimplePreset}`;
     },
-    prewarm: async () => {
-        await getScaler();
+    prewarm: async (runtimeSettings = getRuntimePreferenceSnapshot()) => {
+        await getScaler(runtimeSettings);
     },
     reset: resetWebGlAdapterState
 };

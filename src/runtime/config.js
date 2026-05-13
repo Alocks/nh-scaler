@@ -51,6 +51,15 @@ function getRuntimePreferenceSnapshot() {
     };
 }
 
+function getNormalizedRuntimePreferenceSnapshot(snapshot) {
+    const source = snapshot && typeof snapshot === 'object' ? snapshot : {};
+    return {
+        selectedSimplePreset: normalizeSimplePreset(source.selectedSimplePreset),
+        selectedEngineBackend: normalizeEngineBackend(source.selectedEngineBackend),
+        selectedWebGpuModel: normalizeWebGpuModel(source.selectedWebGpuModel)
+    };
+}
+
 function applyRuntimePreferenceStorageChanges(changes) {
     const hasPresetChange = !!changes[SIMPLE_PRESET_KEY];
     const hasBackendChange = !!changes[ENGINE_BACKEND_KEY];

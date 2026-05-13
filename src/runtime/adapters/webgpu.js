@@ -26,8 +26,9 @@ function supportsWebGpuBackend() {
     );
 }
 
-function getWebGpuPresetCtor(lib) {
-    const explicitCtor = lib[selectedWebGpuModel];
+function getWebGpuPresetCtor(lib, runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
+    const explicitCtor = lib[settings.selectedWebGpuModel];
     if (typeof explicitCtor === 'function') {
         return explicitCtor;
     }
@@ -40,7 +41,7 @@ function getWebGpuPresetCtor(lib) {
         UL: [lib.ModeCA, lib.ModeAA, lib.ModeA]
     };
 
-    const ordered = presetByLevel[selectedSimplePreset] || [lib.ModeA, lib.ModeB, lib.ModeC];
+    const ordered = presetByLevel[settings.selectedSimplePreset] || [lib.ModeA, lib.ModeB, lib.ModeC];
     for (const ctor of ordered) {
         if (typeof ctor === 'function') return ctor;
     }
@@ -181,7 +182,8 @@ function getOrCreateWebGpuRenderPipeline(device, format) {
     return webgpuRenderPipeline;
 }
 
-async function runAnime4KWebGpu(tempImg, canvas) {
+async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
     const lib = getWebGpuLibrary();
     if (!lib) {
         throw new Error('anime4k-webgpu runtime is not loaded on window');
@@ -199,7 +201,7 @@ async function runAnime4KWebGpu(tempImg, canvas) {
         throw new Error('Failed to acquire WebGPU canvas context');
     }
 
-    const requestedScale = selectedWebGpuModel === 'GANx4UUL' ? 4 : selectedWebGpuModel === 'GANx3L' ? 3 : 2;
+    const requestedScale = settings.selectedWebGpuModel === 'GANx4UUL' ? 4 : settings.selectedWebGpuModel === 'GANx3L' ? 3 : 2;
     const targetWidth = nativeWidth * requestedScale;
     const targetHeight = nativeHeight * requestedScale;
 
@@ -217,7 +219,7 @@ async function runAnime4KWebGpu(tempImg, canvas) {
 
     const encoder = device.createCommandEncoder();
     let outputTexture = null;
-    let modelUsed = selectedWebGpuModel;
+    let modelUsed = settings.selectedWebGpuModel;
 
     if (typeof lib.Anime4K === 'function') {
         const anime = new lib.Anime4K(device, inputTexture);
@@ -229,11 +231,11 @@ async function runAnime4KWebGpu(tempImg, canvas) {
         });
         anime.render(outputTexture, encoder);
     } else {
-        const presetCtor = getWebGpuPresetCtor(lib);
+        const presetCtor = getWebGpuPresetCtor(lib, settings);
         if (!presetCtor) {
             throw new Error('No compatible anime4k-webgpu preset class is exported');
         }
-        modelUsed = presetCtor.name || selectedWebGpuModel;
+        modelUsed = presetCtor.name || settings.selectedWebGpuModel;
         const pipeline = new presetCtor({
             device,
             inputTexture,

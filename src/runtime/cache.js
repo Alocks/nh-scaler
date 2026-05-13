@@ -39,15 +39,16 @@ function rememberProcessedCacheEntry(cacheKey, blob) {
     trimProcessedCacheEntries();
 }
 
-function getProcessedCacheSignature() {
-    const backend = getEffectiveBackend();
+function getProcessedCacheSignature(runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
+    const backend = getEffectiveBackend(settings);
     if (backend === 'off') return 'off';
-    return `${backend}|${selectedSimplePreset}|${selectedWebGpuModel}`;
+    return `${backend}|${settings.selectedSimplePreset}|${settings.selectedWebGpuModel}`;
 }
 
-function getProcessedCacheKey(url) {
+function getProcessedCacheKey(url, runtimeSettings = getRuntimePreferenceSnapshot()) {
     if (typeof url !== 'string' || !url) return null;
-    return `${getProcessedCacheSignature()}|${url}`;
+    return `${getProcessedCacheSignature(runtimeSettings)}|${url}`;
 }
 
 function openProcessedCacheDb() {
@@ -77,8 +78,8 @@ function openProcessedCacheDb() {
     return processedCacheDbPromise;
 }
 
-async function getProcessedCacheBlob(url) {
-    const cacheKey = getProcessedCacheKey(url);
+async function getProcessedCacheBlob(url, runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const cacheKey = getProcessedCacheKey(url, runtimeSettings);
     if (!cacheKey) return null;
 
     const memoryBlob = getProcessedCacheEntry(cacheKey);
@@ -106,8 +107,8 @@ async function getProcessedCacheBlob(url) {
     });
 }
 
-async function setProcessedCacheBlob(url, blob) {
-    const cacheKey = getProcessedCacheKey(url);
+async function setProcessedCacheBlob(url, blob, runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const cacheKey = getProcessedCacheKey(url, runtimeSettings);
     if (!cacheKey || !blob) return;
 
     rememberProcessedCacheEntry(cacheKey, blob);
@@ -125,8 +126,8 @@ async function setProcessedCacheBlob(url, blob) {
     });
 }
 
-function hasProcessedCacheEntry(url) {
-    const cacheKey = getProcessedCacheKey(url);
+function hasProcessedCacheEntry(url, runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const cacheKey = getProcessedCacheKey(url, runtimeSettings);
     return !!cacheKey && processedCache.has(cacheKey);
 }
 
