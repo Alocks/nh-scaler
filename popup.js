@@ -41,8 +41,12 @@ function formatRuntimeDiagnostics(diagnostics) {
   const hooks = diagnostics.hooks || {};
   const queue = diagnostics.queue || {};
   const adapters = diagnostics.adapters || {};
+  const generatedAt = Number.isFinite(diagnostics.generatedAt) ? new Date(diagnostics.generatedAt).toLocaleTimeString() : 'unknown';
+  const pageUrl = diagnostics.pageUrl || 'unknown';
 
   return [
+    `Snapshot: ${generatedAt}`,
+    `Page: ${pageUrl}`,
     `Backend: ${prefs.selectedEngineBackend || 'unknown'} (effective: ${diagnostics.effectiveBackend || 'unknown'})`,
     `Preset: ${prefs.selectedSimplePreset || 'unknown'} | WebGPU model: ${prefs.selectedWebGpuModel || 'unknown'}`,
     `Route: ${diagnostics.readerRoute ? 'reader' : 'non-reader'} | Foreground: ${diagnostics.foreground ? 'yes' : 'no'}`,

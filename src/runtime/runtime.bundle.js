@@ -1438,6 +1438,8 @@ function getRuntimeDiagnosticsSnapshot() {
 
     const imageSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
     return {
+        generatedAt: Date.now(),
+        pageUrl: window.location.href,
         preferences,
         effectiveBackend,
         readerRoute: isNhentaiReaderPageUrl(window.location.href),
