@@ -219,8 +219,6 @@ function isNhentaiGalleryUrl(url) {
     return !!parseNhentaiGalleryImageUrl(url);
 }
 
-const isLikelyNhentaiImageUrl = isNhentaiGalleryUrl;
-
 function getGalleryPageKey(url) {
     return parseNhentaiGalleryImageUrl(url)?.pageKey || null;
 }
@@ -496,21 +494,6 @@ let webgpuSampler = null;
 function getWebGpuLibrary() {
     const lib = window['anime4k-webgpu'];
     return lib && typeof lib === 'object' ? lib : null;
-}
-
-function supportsWebGpuBackend() {
-    if (!navigator?.gpu) return false;
-    const lib = getWebGpuLibrary();
-    if (!lib) return false;
-    return (
-        typeof lib.Anime4K === 'function' ||
-        typeof lib.ModeA === 'function' ||
-        typeof lib.ModeAA === 'function' ||
-        typeof lib.ModeB === 'function' ||
-        typeof lib.ModeBB === 'function' ||
-        typeof lib.ModeC === 'function' ||
-        typeof lib.ModeCA === 'function'
-    );
 }
 
 function getWebGpuPresetCtor(lib, runtimeSettings = getRuntimePreferenceSnapshot()) {
@@ -1852,7 +1835,7 @@ backendReadyPromise
         return prewarmSelectedBackend();
     })
     .catch(err => {
-        log('scaler:preinit-failed', { error: String(err) });
+        log('engine:prewarm-failed', { error: String(err) });
     });
 
 Promise.allSettled([backendReadyPromise, webgpuModelReadyPromise, presetReadyPromise])

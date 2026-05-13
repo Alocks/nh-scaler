@@ -60,8 +60,6 @@ function isNhentaiGalleryUrl(url) {
     return !!parseNhentaiGalleryImageUrl(url);
 }
 
-const isLikelyNhentaiImageUrl = isNhentaiGalleryUrl;
-
 function getGalleryPageKey(url) {
     return parseNhentaiGalleryImageUrl(url)?.pageKey || null;
 }

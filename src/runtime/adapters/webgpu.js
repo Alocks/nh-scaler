@@ -11,21 +11,6 @@ function getWebGpuLibrary() {
     return lib && typeof lib === 'object' ? lib : null;
 }
 
-function supportsWebGpuBackend() {
-    if (!navigator?.gpu) return false;
-    const lib = getWebGpuLibrary();
-    if (!lib) return false;
-    return (
-        typeof lib.Anime4K === 'function' ||
-        typeof lib.ModeA === 'function' ||
-        typeof lib.ModeAA === 'function' ||
-        typeof lib.ModeB === 'function' ||
-        typeof lib.ModeBB === 'function' ||
-        typeof lib.ModeC === 'function' ||
-        typeof lib.ModeCA === 'function'
-    );
-}
-
 function getWebGpuPresetCtor(lib, runtimeSettings = getRuntimePreferenceSnapshot()) {
     const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
     const explicitCtor = lib[settings.selectedWebGpuModel];

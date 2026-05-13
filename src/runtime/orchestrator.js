@@ -564,7 +564,7 @@ backendReadyPromise
         return prewarmSelectedBackend();
     })
     .catch(err => {
-        log('scaler:preinit-failed', { error: String(err) });
+        log('engine:prewarm-failed', { error: String(err) });
     });
 
 Promise.allSettled([backendReadyPromise, webgpuModelReadyPromise, presetReadyPromise])
