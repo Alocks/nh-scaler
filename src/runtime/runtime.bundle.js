@@ -662,7 +662,12 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     const device = await getWebGpuDevice();
     const nativeWidth = tempImg.naturalWidth || tempImg.width;
     const nativeHeight = tempImg.naturalHeight || tempImg.height;
-    if (!nativeWidth || !nativeHeight) {
+    if (
+        !Number.isFinite(nativeWidth) ||
+        !Number.isFinite(nativeHeight) ||
+        nativeWidth <= 0 ||
+        nativeHeight <= 0
+    ) {
         throw new Error('Invalid source image dimensions for WebGPU');
     }
 
@@ -671,7 +676,7 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
         throw new Error('Failed to acquire WebGPU canvas context');
     }
 
-    const requestedScale = settings.selectedWebGpuModel === 'GANx4UUL' ? 4 : settings.selectedWebGpuModel === 'GANx3L' ? 3 : 2;
+    const requestedScale = 2;
     const targetWidth = nativeWidth * requestedScale;
     const targetHeight = nativeHeight * requestedScale;
 
