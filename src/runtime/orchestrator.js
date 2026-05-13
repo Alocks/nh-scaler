@@ -4,6 +4,8 @@ const SAFETY_INTERVAL_MS = 1000;
 const BACKGROUND_DISCOVERY_DEBOUNCE_MS = 150;
 const NH_SCALER_HOOK_MARK = '__nhScalerHooked__';
 const NH_SCALER_IMAGE_PROXY_MARK = '__nhScalerImageProxy__';
+const BOOT_DIAGNOSTICS_PHASE_INITIAL = 'initial';
+const BOOT_DIAGNOSTICS_PHASE_READY = 'ready';
 
 let jobCounter = 0;
 const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
@@ -14,6 +16,54 @@ function log(label, data = {}) {
         return;
     }
     console.log('[NH Scaler]', label, { ts: new Date().toISOString(), ...data });
+}
+
+function getAdapterMethodStatus(adapterName) {
+    const adapter = window[adapterName];
+    return {
+        exists: !!adapter,
+        isSupported: typeof adapter?.isSupported === 'function',
+        upscale: typeof adapter?.upscale === 'function',
+        prewarm: typeof adapter?.prewarm === 'function',
+        reset: typeof adapter?.reset === 'function'
+    };
+}
+
+function runBootDiagnostics(phase) {
+    const imageSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    const webGlAdapterStatus = getAdapterMethodStatus('WebGLAdapter');
+    const webGpuAdapterStatus = getAdapterMethodStatus('WebGPUAdapter');
+
+    const diagnostics = {
+        phase,
+        url: window.location.href,
+        readyState: document.readyState,
+        hasBody: !!document.body,
+        readerRoute: isNhentaiReaderPageUrl(window.location.href),
+        hooks: {
+            fetch: !!window.fetch?.[NH_SCALER_HOOK_MARK],
+            imageConstructor: !!window.Image?.[NH_SCALER_IMAGE_PROXY_MARK],
+            imageSrc: !!imageSrcDescriptor?.set?.[NH_SCALER_HOOK_MARK]
+        },
+        adapters: {
+            webgl: webGlAdapterStatus,
+            webgpu: webGpuAdapterStatus
+        }
+    };
+
+    log('boot:diagnostics', diagnostics);
+
+    const missing = [];
+    if (!diagnostics.hasBody) missing.push('document.body');
+    if (!diagnostics.hooks.fetch) missing.push('fetch-hook');
+    if (!diagnostics.hooks.imageConstructor) missing.push('image-constructor-hook');
+    if (!diagnostics.hooks.imageSrc) missing.push('image-src-hook');
+    if (!webGlAdapterStatus.exists || !webGlAdapterStatus.upscale) missing.push('WebGLAdapter.upscale');
+    if (!webGpuAdapterStatus.exists || !webGpuAdapterStatus.upscale) missing.push('WebGPUAdapter.upscale');
+
+    if (missing.length > 0) {
+        log('boot:missing-dependencies', { phase, missing });
+    }
 }
 
 function isForegroundTab() {
@@ -394,7 +444,18 @@ const rootObserver = new MutationObserver((mutations) => {
     }
 });
 
-rootObserver.observe(document.body, { childList: true, subtree: true });
+function startRootObserver() {
+    if (!document.body) {
+        log('boot:waiting-for-body');
+        return;
+    }
+    rootObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+startRootObserver();
+if (!document.body) {
+    document.addEventListener('DOMContentLoaded', startRootObserver, { once: true });
+}
 
 document.addEventListener('visibilitychange', () => {
     if (!isForegroundTab()) {
@@ -460,6 +521,22 @@ backendReadyPromise
         log('scaler:preinit-failed', { error: String(err) });
     });
 
+Promise.allSettled([backendReadyPromise, webgpuModelReadyPromise, presetReadyPromise])
+    .then((results) => {
+        runBootDiagnostics(BOOT_DIAGNOSTICS_PHASE_READY);
+        const failed = results
+            .map((result, index) => ({ result, index }))
+            .filter((entry) => entry.result.status === 'rejected')
+            .map((entry) => ({
+                promiseIndex: entry.index,
+                reason: String(entry.result.reason)
+            }));
+
+        if (failed.length > 0) {
+            log('boot:promise-rejections', { failed });
+        }
+    });
+
 setInterval(() => {
     if (!isForegroundTab()) return;
 
@@ -471,3 +548,4 @@ setInterval(() => {
 attachContainerObserver();
 scheduleProcess('initial');
 scheduleBackgroundDiscovery('initial');
+runBootDiagnostics(BOOT_DIAGNOSTICS_PHASE_INITIAL);
