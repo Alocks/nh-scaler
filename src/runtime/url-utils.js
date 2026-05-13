@@ -15,6 +15,29 @@ function isNhentaiHost(hostname) {
     return typeof hostname === 'string' && /(^|\.)nhentai\.net$/i.test(hostname);
 }
 
+function parseNhentaiGalleryImageUrl(url) {
+    const parsed = parseUrlSafely(url);
+    if (!parsed || !isNhentaiHost(parsed.hostname)) return null;
+
+    const match = parsed.pathname.match(/^\/galleries\/(\d+)\/(\d+)\.(webp|jpe?g|png)$/i);
+    if (!match) return null;
+
+    const galleryId = match[1];
+    const page = Number(match[2]);
+    if (!Number.isFinite(page)) {
+        logNhentaiParseIssue('page-number-invalid', url, { rawPage: match[2] });
+        return null;
+    }
+
+    return {
+        parsedUrl: parsed,
+        galleryId,
+        page,
+        extension: match[3].toLowerCase(),
+        pageKey: `${galleryId}/${page}`
+    };
+}
+
 function logNhentaiParseIssue(kind, url, extra = {}) {
     if (typeof url !== 'string' || !url) return;
 
@@ -27,12 +50,6 @@ function logNhentaiParseIssue(kind, url, extra = {}) {
     }
 }
 
-function isLikelyNhentaiImageUrl(url) {
-    const parsed = parseUrlSafely(url);
-    if (!parsed || !isNhentaiHost(parsed.hostname)) return false;
-    return /^\/galleries\/\d+\/\d+\.(?:webp|jpe?g|png)$/i.test(parsed.pathname);
-}
-
 function isNhentaiReaderPageUrl(url) {
     const parsed = parseUrlSafely(url);
     if (!parsed || !isNhentaiHost(parsed.hostname)) return false;
@@ -40,38 +57,15 @@ function isNhentaiReaderPageUrl(url) {
 }
 
 function isNhentaiGalleryUrl(url) {
-    const parsed = parseUrlSafely(url);
-    if (!parsed || !isNhentaiHost(parsed.hostname)) return false;
-    return /^\/galleries\/\d+\/\d+\.(?:webp|jpe?g|png)$/i.test(parsed.pathname);
+    return !!parseNhentaiGalleryImageUrl(url);
 }
 
+const isLikelyNhentaiImageUrl = isNhentaiGalleryUrl;
+
 function getGalleryPageKey(url) {
-    const parsed = parseUrlSafely(url);
-    if (!parsed) return null;
-    const match = parsed.pathname.match(/^\/galleries\/(\d+)\/(\d+)\.(?:webp|jpe?g|png)$/i);
-    if (!match) {
-        if (isLikelyNhentaiImageUrl(url)) {
-            logNhentaiParseIssue('gallery-key-miss', url);
-        }
-        return null;
-    }
-    return `${match[1]}/${match[2]}`;
+    return parseNhentaiGalleryImageUrl(url)?.pageKey || null;
 }
 
 function getPageNumberFromUrl(url) {
-    const parsed = parseUrlSafely(url);
-    if (!parsed) return null;
-    const match = parsed.pathname.match(/^\/galleries\/\d+\/(\d+)\.(?:webp|jpe?g|png)$/i);
-    if (!match) {
-        if (isLikelyNhentaiImageUrl(url)) {
-            logNhentaiParseIssue('page-number-miss', url);
-        }
-        return null;
-    }
-    const page = Number(match[1]);
-    if (!Number.isFinite(page)) {
-        logNhentaiParseIssue('page-number-invalid', url, { rawPage: match[1] });
-        return null;
-    }
-    return Number.isFinite(page) ? page : null;
+    return parseNhentaiGalleryImageUrl(url)?.page || null;
 }
