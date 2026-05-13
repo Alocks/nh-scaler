@@ -1,19 +1,29 @@
 const SIMPLE_PRESET_KEY = 'simplePreset';
 const ENGINE_BACKEND_KEY = 'engineBackend';
 const WEBGPU_MODEL_KEY = 'webgpuModel';
+const WEBGPU_SCALE_KEY = 'webgpuScale';
 
 const DEFAULT_SIMPLE_PRESET = 'M';
 const DEFAULT_ENGINE_BACKEND = 'webgl';
 const DEFAULT_WEBGPU_MODEL = 'ModeA';
+const DEFAULT_WEBGPU_SCALE = 2;
 const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
 const GET_DIAGNOSTICS_MESSAGE_TYPE = 'nh-scaler:get-diagnostics';
 const NHENTAI_TAB_URL_PATTERN = /^https?:\/\/(?:[^/]+\.)?nhentai\.net\//i;
 const POPUP_MESSAGE_TIMEOUT_MS = 5000;
 let isWebGpuSupported = true;
+let diagnosticsRefreshTimer = null;
+let diagnosticsFollowUpTimer = null;
 
 const clearCacheButton = document.getElementById('clearCacheButton');
 const cacheActionStatus = document.getElementById('cacheActionStatus');
 const runtimeDiagnostics = document.getElementById('runtimeDiagnostics');
+const webgpuScaleSelect = document.getElementById('webgpuScale');
+
+function normalizeWebGpuScale(value) {
+  const scale = Number(value);
+  return scale === 2 || scale === 3 || scale === 4 ? scale : DEFAULT_WEBGPU_SCALE;
+}
 
 function setCacheActionStatus(message, tone = '') {
   if (!cacheActionStatus) return;
@@ -31,6 +41,29 @@ function isNhentaiTab(tab) {
 function setRuntimeDiagnosticsText(text) {
   if (!runtimeDiagnostics) return;
   runtimeDiagnostics.textContent = text;
+}
+
+function scheduleRuntimeDiagnosticsRefresh() {
+  if (diagnosticsRefreshTimer !== null) {
+    clearTimeout(diagnosticsRefreshTimer);
+  }
+  diagnosticsRefreshTimer = window.setTimeout(() => {
+    diagnosticsRefreshTimer = null;
+    refreshRuntimeDiagnostics();
+  }, 60);
+
+  if (diagnosticsFollowUpTimer !== null) {
+    clearTimeout(diagnosticsFollowUpTimer);
+  }
+  diagnosticsFollowUpTimer = window.setTimeout(() => {
+    diagnosticsFollowUpTimer = null;
+    refreshRuntimeDiagnostics();
+  }, 360);
+}
+
+async function persistSettingAndRefresh(patch) {
+  await chrome.storage.sync.set(patch);
+  scheduleRuntimeDiagnosticsRefresh();
 }
 
 async function sendMessageWithTimeout(tabId, payload, timeoutMs = POPUP_MESSAGE_TIMEOUT_MS) {
@@ -68,7 +101,7 @@ function formatRuntimeDiagnostics(diagnostics) {
     `Snapshot: ${generatedAt}`,
     `Page: ${pageUrl}`,
     `Backend: ${prefs.selectedEngineBackend || 'unknown'} (effective: ${diagnostics.effectiveBackend || 'unknown'})`,
-    `Preset: ${prefs.selectedSimplePreset || 'unknown'} | WebGPU model: ${prefs.selectedWebGpuModel || 'unknown'}`,
+    `Preset: ${prefs.selectedSimplePreset || 'unknown'} | WebGPU model: ${prefs.selectedWebGpuModel || 'unknown'} | WebGPU scale: ${prefs.selectedWebGpuScale || DEFAULT_WEBGPU_SCALE}x`,
     `Route: ${diagnostics.readerRoute ? 'reader' : 'non-reader'} | Foreground: ${diagnostics.foreground ? 'yes' : 'no'}`,
     `Hooks - fetch: ${hooks.fetch ? 'ok' : 'missing'}, image-src: ${hooks.imageSrc ? 'ok' : 'missing'}, Image(): ${hooks.imageConstructor ? 'ok' : 'missing'}`,
     `Adapters - WebGL: capable=${adapters.webgl?.capable ? 'yes' : 'no'}, initialized=${adapters.webgl?.initialized ? 'yes' : 'no'}, supported=${adapters.webgl?.isSupported ? 'yes' : 'no'}`,
@@ -151,6 +184,10 @@ function applyWebGpuAvailabilityUi(supported) {
     const option = input.closest('.preset-option');
     if (option) option.classList.toggle('disabled', !supported);
   });
+
+  if (webgpuScaleSelect) {
+    webgpuScaleSelect.disabled = !supported;
+  }
 }
 
 function setActiveEnginePanel(backend) {
@@ -179,12 +216,14 @@ async function loadCurrentSettings() {
   const result = await chrome.storage.sync.get({
     [SIMPLE_PRESET_KEY]: DEFAULT_SIMPLE_PRESET,
     [ENGINE_BACKEND_KEY]: DEFAULT_ENGINE_BACKEND,
-    [WEBGPU_MODEL_KEY]: DEFAULT_WEBGPU_MODEL
+    [WEBGPU_MODEL_KEY]: DEFAULT_WEBGPU_MODEL,
+    [WEBGPU_SCALE_KEY]: DEFAULT_WEBGPU_SCALE
   });
 
   const currentPreset = String(result[SIMPLE_PRESET_KEY] || DEFAULT_SIMPLE_PRESET).toUpperCase();
   let currentBackend = String(result[ENGINE_BACKEND_KEY] || DEFAULT_ENGINE_BACKEND).toLowerCase();
   const currentWebGpuModel = String(result[WEBGPU_MODEL_KEY] || DEFAULT_WEBGPU_MODEL);
+  const currentWebGpuScale = normalizeWebGpuScale(result[WEBGPU_SCALE_KEY]);
 
   if (!isWebGpuSupported && currentBackend === 'webgpu') {
     currentBackend = 'webgl';
@@ -197,39 +236,65 @@ async function loadCurrentSettings() {
   const webgpuModelRadio = document.querySelector(`input[name="webgpuModel"][value="${currentWebGpuModel}"]`);
   if (webgpuModelRadio) webgpuModelRadio.checked = true;
 
+  if (webgpuScaleSelect) {
+    webgpuScaleSelect.value = String(currentWebGpuScale);
+  }
+
   applyWebGpuAvailabilityUi(isWebGpuSupported);
   setActiveEnginePanel(currentBackend);
 }
 
 // Save preset on selection change
 document.querySelectorAll('input[name="preset"]').forEach((radio) => {
-  radio.addEventListener('change', (e) => {
+  radio.addEventListener('change', async (e) => {
     if (e.target.checked) {
-      chrome.storage.sync.set({ [SIMPLE_PRESET_KEY]: e.target.value });
+      await persistSettingAndRefresh({ [SIMPLE_PRESET_KEY]: e.target.value });
     }
   });
 });
 
 // Save backend on tab click
 document.querySelectorAll('.tab-pill').forEach((tab) => {
-  tab.addEventListener('click', () => {
+  tab.addEventListener('click', async () => {
     const backend = String(tab.dataset.tab || DEFAULT_ENGINE_BACKEND).toLowerCase();
     if (backend === 'webgpu' && !isWebGpuSupported) {
       return;
     }
     setActiveEnginePanel(backend);
-    chrome.storage.sync.set({ [ENGINE_BACKEND_KEY]: backend });
+    await persistSettingAndRefresh({ [ENGINE_BACKEND_KEY]: backend });
   });
 });
 
 // Save webgpu model on selection change
 document.querySelectorAll('input[name="webgpuModel"]').forEach((radio) => {
-  radio.addEventListener('change', (e) => {
+  radio.addEventListener('change', async (e) => {
     if (e.target.checked) {
-      chrome.storage.sync.set({ [WEBGPU_MODEL_KEY]: e.target.value });
+      await persistSettingAndRefresh({ [WEBGPU_MODEL_KEY]: e.target.value });
     }
   });
 });
+
+if (webgpuScaleSelect) {
+  webgpuScaleSelect.addEventListener('change', async (event) => {
+    const nextScale = normalizeWebGpuScale(event.target?.value);
+    webgpuScaleSelect.value = String(nextScale);
+    await persistSettingAndRefresh({ [WEBGPU_SCALE_KEY]: nextScale });
+  });
+}
+
+if (chrome?.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'sync') return;
+    if (
+      changes[SIMPLE_PRESET_KEY] ||
+      changes[ENGINE_BACKEND_KEY] ||
+      changes[WEBGPU_MODEL_KEY] ||
+      changes[WEBGPU_SCALE_KEY]
+    ) {
+      scheduleRuntimeDiagnosticsRefresh();
+    }
+  });
+}
 
 // Load on popup open
 loadCurrentSettings();

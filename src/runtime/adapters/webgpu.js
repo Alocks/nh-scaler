@@ -208,7 +208,7 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
         throw new Error('Failed to acquire WebGPU canvas context');
     }
 
-    const requestedScale = 4;
+    const requestedScale = settings.selectedWebGpuScale;
     const targetWidth = nativeWidth * requestedScale;
     const targetHeight = nativeHeight * requestedScale;
 

@@ -76,6 +76,30 @@
       margin-top: -6px;
     }
 
+    .field-row {
+      margin-top: 10px;
+    }
+
+    .field-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .field-select {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid #d8d8d8;
+      border-radius: 4px;
+      background: #fff;
+      color: #333;
+      font-size: 12px;
+    }
+
     .section-title {
       font-size: 12px;
       font-weight: 600;
@@ -307,6 +331,14 @@
           <span class="preset-label">Quality Denoise</span>
         </label>
         <div class="preset-desc">~0.32s per image</div>
+      </div>
+      <div class="field-row">
+        <label class="field-label" for="webgpuScale">Scale</label>
+        <select id="webgpuScale" class="field-select" name="webgpuScale">
+          <option value="2">2x</option>
+          <option value="3">3x</option>
+          <option value="4">4x</option>
+        </select>
       </div>
       <div class="status">
       Measurements done on an RTX4070TS

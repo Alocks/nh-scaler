@@ -235,7 +235,7 @@ if (typeof window.Image === 'function' && !window.Image[NH_SCALER_IMAGE_PROXY_MA
 async function processCurrentImage(container) {
     if (!isForegroundTab()) return;
 
-    await Promise.all([backendReadyPromise, webgpuModelReadyPromise]);
+    await Promise.all([backendReadyPromise, webgpuModelReadyPromise, webgpuScaleReadyPromise]);
 
     const img = container.querySelector('img');
     if (!img) return;
@@ -585,7 +585,7 @@ backendReadyPromise
         log('engine:prewarm-failed', { error: String(err) });
     });
 
-Promise.allSettled([backendReadyPromise, webgpuModelReadyPromise, presetReadyPromise])
+Promise.allSettled([backendReadyPromise, webgpuModelReadyPromise, webgpuScaleReadyPromise, presetReadyPromise])
     .then((results) => {
         runBootDiagnostics(BOOT_DIAGNOSTICS_PHASE_READY);
         const failed = results

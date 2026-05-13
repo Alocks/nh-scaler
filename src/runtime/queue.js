@@ -136,7 +136,7 @@ async function processBackgroundQueue() {
 
     backgroundProcessing = true;
 
-    await Promise.all([backendReadyPromise, webgpuModelReadyPromise]);
+    await Promise.all([backendReadyPromise, webgpuModelReadyPromise, webgpuScaleReadyPromise]);
 
     if (backgroundQueue.length === 0) return;
 

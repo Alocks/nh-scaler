@@ -7,21 +7,26 @@
 const SIMPLE_PRESET_KEY = 'simplePreset';
 const ENGINE_BACKEND_KEY = 'engineBackend';
 const WEBGPU_MODEL_KEY = 'webgpuModel';
+const WEBGPU_SCALE_KEY = 'webgpuScale';
 const DEFAULT_SIMPLE_PRESET = 'M';
 const DEFAULT_ENGINE_BACKEND = 'webgl';
 const DEFAULT_WEBGPU_MODEL = 'ModeA';
+const DEFAULT_WEBGPU_SCALE = 2;
 const SIMPLE_PRESET_VALUES = new Set(['S', 'M', 'L', 'UL', 'VL']);
 const ENGINE_BACKEND_VALUES = new Set(['off', 'webgl', 'webgpu']);
 const WEBGPU_MODEL_VALUES = new Set([
     'ModeA', 'ModeAA', 'ModeB', 'ModeBB', 'ModeC', 'ModeCA'
 ]);
+const WEBGPU_SCALE_VALUES = new Set([2, 3, 4]);
 
 let selectedSimplePreset = DEFAULT_SIMPLE_PRESET;
 let selectedEngineBackend = DEFAULT_ENGINE_BACKEND;
 let selectedWebGpuModel = DEFAULT_WEBGPU_MODEL;
+let selectedWebGpuScale = DEFAULT_WEBGPU_SCALE;
 let presetReadyPromise = Promise.resolve();
 let backendReadyPromise = Promise.resolve();
 let webgpuModelReadyPromise = Promise.resolve();
+let webgpuScaleReadyPromise = Promise.resolve();
 let backendPreferenceLoaded = false;
 
 function runtimeLog(label, data = {}) {
@@ -47,11 +52,17 @@ function normalizeWebGpuModel(value) {
     return WEBGPU_MODEL_VALUES.has(normalized) ? normalized : DEFAULT_WEBGPU_MODEL;
 }
 
+function normalizeWebGpuScale(value) {
+    const normalized = Number(value);
+    return WEBGPU_SCALE_VALUES.has(normalized) ? normalized : DEFAULT_WEBGPU_SCALE;
+}
+
 function getRuntimePreferenceSnapshot() {
     return {
         selectedSimplePreset,
         selectedEngineBackend,
-        selectedWebGpuModel
+        selectedWebGpuModel,
+        selectedWebGpuScale
     };
 }
 
@@ -60,7 +71,8 @@ function getNormalizedRuntimePreferenceSnapshot(snapshot) {
     return {
         selectedSimplePreset: normalizeSimplePreset(source.selectedSimplePreset),
         selectedEngineBackend: normalizeEngineBackend(source.selectedEngineBackend),
-        selectedWebGpuModel: normalizeWebGpuModel(source.selectedWebGpuModel)
+        selectedWebGpuModel: normalizeWebGpuModel(source.selectedWebGpuModel),
+        selectedWebGpuScale: normalizeWebGpuScale(source.selectedWebGpuScale)
     };
 }
 
@@ -68,8 +80,9 @@ function applyRuntimePreferenceStorageChanges(changes) {
     const hasPresetChange = !!changes[SIMPLE_PRESET_KEY];
     const hasBackendChange = !!changes[ENGINE_BACKEND_KEY];
     const hasWebGpuModelChange = !!changes[WEBGPU_MODEL_KEY];
-    if (!hasPresetChange && !hasBackendChange && !hasWebGpuModelChange) {
-        return { didChange: false, changed: { preset: false, backend: false, webgpuModel: false } };
+    const hasWebGpuScaleChange = !!changes[WEBGPU_SCALE_KEY];
+    if (!hasPresetChange && !hasBackendChange && !hasWebGpuModelChange && !hasWebGpuScaleChange) {
+        return { didChange: false, changed: { preset: false, backend: false, webgpuModel: false, webgpuScale: false } };
     }
 
     let didChange = false;
@@ -98,12 +111,21 @@ function applyRuntimePreferenceStorageChanges(changes) {
         }
     }
 
+    if (hasWebGpuScaleChange) {
+        const nextWebGpuScale = normalizeWebGpuScale(changes[WEBGPU_SCALE_KEY].newValue);
+        if (nextWebGpuScale !== selectedWebGpuScale) {
+            selectedWebGpuScale = nextWebGpuScale;
+            didChange = true;
+        }
+    }
+
     return {
         didChange,
         changed: {
             preset: hasPresetChange,
             backend: hasBackendChange,
-            webgpuModel: hasWebGpuModelChange
+            webgpuModel: hasWebGpuModelChange,
+            webgpuScale: hasWebGpuScaleChange
         }
     };
 }
@@ -151,9 +173,24 @@ function loadWebGpuModelPreference() {
     });
 }
 
+function loadWebGpuScalePreference() {
+    if (!chrome?.storage?.sync) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        chrome.storage.sync.get({ [WEBGPU_SCALE_KEY]: DEFAULT_WEBGPU_SCALE }, (result) => {
+            selectedWebGpuScale = normalizeWebGpuScale(result?.[WEBGPU_SCALE_KEY]);
+            runtimeLog('webgpu-scale:loaded', { selectedWebGpuScale });
+            resolve();
+        });
+    });
+}
+
 presetReadyPromise = loadSimplePresetPreference();
 backendReadyPromise = loadEngineBackendPreference();
 webgpuModelReadyPromise = loadWebGpuModelPreference();
+webgpuScaleReadyPromise = loadWebGpuScalePreference();
 // --- END src/runtime/config.js ---
 
 // --- BEGIN src/runtime/url-utils.js ---
@@ -274,7 +311,7 @@ function getProcessedCacheSignature(runtimeSettings = getRuntimePreferenceSnapsh
     const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
     const backend = getEffectiveBackend(settings);
     if (backend === 'off') return 'off';
-    return `${backend}|${settings.selectedSimplePreset}|${settings.selectedWebGpuModel}`;
+    return `${backend}|${settings.selectedSimplePreset}|${settings.selectedWebGpuModel}|${settings.selectedWebGpuScale}`;
 }
 
 function getProcessedCacheKey(url, runtimeSettings = getRuntimePreferenceSnapshot()) {
@@ -723,7 +760,7 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
         throw new Error('Failed to acquire WebGPU canvas context');
     }
 
-    const requestedScale = 4;
+    const requestedScale = settings.selectedWebGpuScale;
     const targetWidth = nativeWidth * requestedScale;
     const targetHeight = nativeHeight * requestedScale;
 
@@ -1207,7 +1244,7 @@ async function processBackgroundQueue() {
 
     backgroundProcessing = true;
 
-    await Promise.all([backendReadyPromise, webgpuModelReadyPromise]);
+    await Promise.all([backendReadyPromise, webgpuModelReadyPromise, webgpuScaleReadyPromise]);
 
     if (backgroundQueue.length === 0) return;
 
@@ -1580,7 +1617,7 @@ if (typeof window.Image === 'function' && !window.Image[NH_SCALER_IMAGE_PROXY_MA
 async function processCurrentImage(container) {
     if (!isForegroundTab()) return;
 
-    await Promise.all([backendReadyPromise, webgpuModelReadyPromise]);
+    await Promise.all([backendReadyPromise, webgpuModelReadyPromise, webgpuScaleReadyPromise]);
 
     const img = container.querySelector('img');
     if (!img) return;
@@ -1930,7 +1967,7 @@ backendReadyPromise
         log('engine:prewarm-failed', { error: String(err) });
     });
 
-Promise.allSettled([backendReadyPromise, webgpuModelReadyPromise, presetReadyPromise])
+Promise.allSettled([backendReadyPromise, webgpuModelReadyPromise, webgpuScaleReadyPromise, presetReadyPromise])
     .then((results) => {
         runBootDiagnostics(BOOT_DIAGNOSTICS_PHASE_READY);
         const failed = results
