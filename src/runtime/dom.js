@@ -1,5 +1,7 @@
 // DOM manipulation for image rendering and canvas management
 
+const IMAGE_LOAD_TIMEOUT_MS = 10000;
+
 function hideOriginal(img) {
     img.style.setProperty('display', 'none', 'important');
     img.style.setProperty('visibility', 'hidden', 'important');
@@ -84,9 +86,43 @@ function reconcile(container) {
 function loadSourceImage(sourceUrl) {
     return new Promise((resolve, reject) => {
         const tempImg = new Image();
+        let settled = false;
+        let timeoutId = null;
+
+        const cleanup = () => {
+            tempImg.onload = null;
+            tempImg.onerror = null;
+            if (timeoutId !== null) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+        };
+
+        const settleResolve = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(tempImg);
+        };
+
+        const settleReject = (error) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        };
+
         tempImg.crossOrigin = 'anonymous';
-        tempImg.onload = () => resolve(tempImg);
-        tempImg.onerror = reject;
+        tempImg.onload = () => settleResolve();
+        tempImg.onerror = () => {
+            settleReject(new Error(`Failed to load source image: ${sourceUrl}`));
+        };
+
+        timeoutId = window.setTimeout(() => {
+            tempImg.src = '';
+            settleReject(new Error(`Timed out loading source image after ${IMAGE_LOAD_TIMEOUT_MS}ms: ${sourceUrl}`));
+        }, IMAGE_LOAD_TIMEOUT_MS);
+
         tempImg.src = sourceUrl;
     });
 }
