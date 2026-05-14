@@ -41,3 +41,25 @@ function getSourcePageKey(url) {
 function getSourcePageNumber(url) {
     return getSourceAdapterForImageUrl(url)?.parsed?.page || null;
 }
+
+function getActiveContainer(pageUrl = window.location.href) {
+    const activeAdapter = getActiveSourceAdapter(pageUrl);
+    if (activeAdapter && typeof activeAdapter?.getActiveContainer === 'function') {
+        const container = activeAdapter.getActiveContainer(pageUrl);
+        if (container instanceof Element) return container;
+    }
+
+    return document.querySelector('#image-container');
+}
+
+function selectForegroundImage(container, pageUrl = window.location.href) {
+    if (!(container instanceof Element)) return null;
+
+    const activeAdapter = getActiveSourceAdapter(pageUrl);
+    if (activeAdapter && typeof activeAdapter?.selectForegroundImage === 'function') {
+        const selectedImage = activeAdapter.selectForegroundImage(container, pageUrl);
+        if (selectedImage instanceof HTMLImageElement) return selectedImage;
+    }
+
+    return container.querySelector('img');
+}

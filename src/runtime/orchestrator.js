@@ -8,15 +8,15 @@ const BOOT_DIAGNOSTICS_PHASE_INITIAL = 'initial';
 const BOOT_DIAGNOSTICS_PHASE_READY = 'ready';
 
 let jobCounter = 0;
-const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
-const GET_DIAGNOSTICS_MESSAGE_TYPE = 'nh-scaler:get-diagnostics';
+const CLEAR_CACHE_MESSAGE_TYPE = 'manga-scaler:clear-cache';
+const GET_DIAGNOSTICS_MESSAGE_TYPE = 'manga-scaler:get-diagnostics';
 
 function log(label, data = {}) {
     if (typeof window.NHScalerLog === 'function') {
         window.NHScalerLog(label, data);
         return;
     }
-    console.log('[NH Scaler]', label, { ts: new Date().toISOString(), ...data });
+    console.log('[Manga Scaler]', label, { ts: new Date().toISOString(), ...data });
 }
 
 function getAdapterMethodStatus(adapterName) {
@@ -71,8 +71,23 @@ function isForegroundTab() {
     return document.visibilityState === 'visible' && !document.hidden;
 }
 
-function getActiveContainer() {
-    return document.querySelector('#image-container');
+function getRequestedScaleForBackend(runtimeSettings) {
+    const backend = getEffectiveBackend(runtimeSettings);
+    const rawScale = backend === 'webgpu'
+        ? runtimeSettings?.selectedWebGpuScale
+        : runtimeSettings?.selectedWebGlScale;
+    const scale = Number(rawScale);
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+function shouldSkipSourceAfterError(error) {
+    const message = String(error || '');
+    return (
+        message.includes('Canvas output is empty after upscale') ||
+        message.includes('WebGPU texture limits exceeded') ||
+        message.includes('Failed to acquire WebGPU canvas context') ||
+        message.includes('Invalid source image dimensions for WebGPU')
+    );
 }
 
 function resetProcessedRuntimeState() {
@@ -238,11 +253,12 @@ async function processCurrentImage(container) {
 
     await Promise.all([backendReadyPromise, webgpuModelReadyPromise, webgpuScaleReadyPromise]);
 
-    const img = container.querySelector('img');
+    const img = selectForegroundImage(container);
     if (!img) return;
 
     const sourceUrl = img.currentSrc || img.src;
     if (!sourceUrl) return;
+    if (img.dataset.aiSkipSource === sourceUrl) return;
 
     const runtimeSettings = getRuntimePreferenceSnapshot();
 
@@ -253,6 +269,32 @@ async function processCurrentImage(container) {
 
     const parent = img.parentElement;
     if (!parent) return;
+
+    const sourceWidth = img.naturalWidth || img.width;
+    const sourceHeight = img.naturalHeight || img.height;
+    const requestedScale = getRequestedScaleForBackend(runtimeSettings);
+
+    if (
+        Number.isFinite(sourceWidth) &&
+        Number.isFinite(sourceHeight) &&
+        sourceWidth > 0 &&
+        sourceHeight > 0 &&
+        !canCanvasSupportDimensions(sourceWidth, sourceHeight)
+    ) {
+        img.dataset.aiSkipSource = sourceUrl;
+        img.dataset.aiProcessed = 'false';
+        disableUpscalingForContainer(container, sourceUrl);
+        log('process:skip-oversize', {
+            sourceUrl,
+            page: getSourcePageNumber(sourceUrl),
+            sourceWidth,
+            sourceHeight,
+            targetWidth: Math.max(1, Math.round(sourceWidth * requestedScale)),
+            targetHeight: Math.max(1, Math.round(sourceHeight * requestedScale)),
+            maxCanvasDimension: getMaxCanvasDimension()
+        });
+        return;
+    }
 
     const existingCanvas = parent.querySelector('.ai-canvas');
 
@@ -297,6 +339,7 @@ async function processCurrentImage(container) {
     const jobId = String(++jobCounter);
     img.dataset.aiJobId = jobId;
     img.dataset.aiProcessingSrc = sourceUrl;
+    delete img.dataset.aiSkipSource;
     img.dataset.aiProcessed = 'true';
     const page = getSourcePageNumber(sourceUrl);
     if (page == null) {
@@ -308,6 +351,28 @@ async function processCurrentImage(container) {
 
     try {
         const tempImg = await loadSourceImage(sourceUrl);
+        const loadedWidth = tempImg.naturalWidth || tempImg.width;
+        const loadedHeight = tempImg.naturalHeight || tempImg.height;
+        const loadedTargetWidth = Math.max(1, Math.round(loadedWidth * requestedScale));
+        const loadedTargetHeight = Math.max(1, Math.round(loadedHeight * requestedScale));
+
+        if (!canCanvasSupportDimensions(loadedWidth, loadedHeight)) {
+            img.dataset.aiSkipSource = sourceUrl;
+            img.dataset.aiProcessed = 'false';
+            delete img.dataset.aiProcessingSrc;
+            disableUpscalingForContainer(container, sourceUrl);
+            log('process:skip-oversize', {
+                sourceUrl,
+                page,
+                sourceWidth: loadedWidth,
+                sourceHeight: loadedHeight,
+                targetWidth: loadedTargetWidth,
+                targetHeight: loadedTargetHeight,
+                maxCanvasDimension: getMaxCanvasDimension(),
+                phase: 'post-load'
+            });
+            return;
+        }
 
         const latestSrc = img.currentSrc || img.src;
         if (isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent)) {
@@ -324,6 +389,7 @@ async function processCurrentImage(container) {
             page,
             duration: (t4 - t3).toFixed(2) + 'ms',
             backend: runInfo.backend,
+            runMode: runInfo.runMode,
             model: runInfo.model,
         });
 
@@ -371,6 +437,9 @@ async function processCurrentImage(container) {
         hideOriginal(img);
         reconcile(container);
     } catch (err) {
+        if (shouldSkipSourceAfterError(err)) {
+            img.dataset.aiSkipSource = sourceUrl;
+        }
         img.dataset.aiProcessed = 'false';
         delete img.dataset.aiProcessingSrc;
         showOriginal(img);

@@ -55,6 +55,7 @@ async function getWebGpuDevice() {
         const adapterLimits = adapter.limits;
         const defaultMaxBufferSize = 268435456;
         const defaultMaxStorageBufferBindingSize = 134217728;
+        const defaultMaxTextureDimension2D = 8192;
 
         if (adapterLimits) {
             if (
@@ -70,6 +71,13 @@ async function getWebGpuDevice() {
                 adapterLimits.maxStorageBufferBindingSize > defaultMaxStorageBufferBindingSize
             ) {
                 requiredLimits.maxStorageBufferBindingSize = adapterLimits.maxStorageBufferBindingSize;
+            }
+            if (
+                typeof adapterLimits.maxTextureDimension2D === 'number' &&
+                Number.isFinite(adapterLimits.maxTextureDimension2D) &&
+                adapterLimits.maxTextureDimension2D > defaultMaxTextureDimension2D
+            ) {
+                requiredLimits.maxTextureDimension2D = adapterLimits.maxTextureDimension2D;
             }
         }
 
@@ -200,16 +208,9 @@ function getOrCreateWebGpuRenderPipeline(device, format) {
     return webgpuRenderPipeline;
 }
 
-async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePreferenceSnapshot()) {
-    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
-    const lib = getWebGpuLibrary();
-    if (!lib) {
-        throw new Error('anime4k-webgpu runtime is not loaded on window');
-    }
-
-    const device = await getWebGpuDevice();
-    const nativeWidth = tempImg.naturalWidth || tempImg.width;
-    const nativeHeight = tempImg.naturalHeight || tempImg.height;
+async function runAnime4KWebGpuSingle(sourceImage, canvas, settings, device, maxTextureDimension2D) {
+    const nativeWidth = sourceImage.naturalWidth || sourceImage.width;
+    const nativeHeight = sourceImage.naturalHeight || sourceImage.height;
     if (
         !Number.isFinite(nativeWidth) ||
         !Number.isFinite(nativeHeight) ||
@@ -219,14 +220,20 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
         throw new Error('Invalid source image dimensions for WebGPU');
     }
 
-    const context = canvas.getContext('webgpu');
-    if (!context) {
-        throw new Error('Failed to acquire WebGPU canvas context');
-    }
-
     const requestedScale = settings.selectedWebGpuScale;
-    const targetWidth = nativeWidth * requestedScale;
-    const targetHeight = nativeHeight * requestedScale;
+    const targetWidth = Math.max(1, Math.round(nativeWidth * requestedScale));
+    const targetHeight = Math.max(1, Math.round(nativeHeight * requestedScale));
+
+    if (
+        nativeWidth > maxTextureDimension2D ||
+        nativeHeight > maxTextureDimension2D ||
+        targetWidth > maxTextureDimension2D ||
+        targetHeight > maxTextureDimension2D
+    ) {
+        throw new Error(
+            `WebGPU texture limits exceeded: input=${nativeWidth}x${nativeHeight}, target=${targetWidth}x${targetHeight}, max=${maxTextureDimension2D}`
+        );
+    }
 
     const inputTexture = device.createTexture({
         size: [nativeWidth, nativeHeight, 1],
@@ -235,7 +242,7 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     });
 
     device.queue.copyExternalImageToTexture(
-        { source: tempImg },
+        { source: sourceImage },
         { texture: inputTexture },
         [nativeWidth, nativeHeight]
     );
@@ -243,6 +250,10 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     const encoder = device.createCommandEncoder();
     let outputTexture = null;
     let modelUsed = settings.selectedWebGpuModel;
+    const lib = getWebGpuLibrary();
+    if (!lib) {
+        throw new Error('anime4k-webgpu runtime is not loaded on window');
+    }
 
     if (typeof lib.Anime4K === 'function') {
         const anime = new lib.Anime4K(device, inputTexture);
@@ -281,6 +292,11 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     canvas.width = outputTexture.width;
     canvas.height = outputTexture.height;
 
+    const context = canvas.getContext('webgpu');
+    if (!context) {
+        throw new Error('Failed to acquire WebGPU canvas context');
+    }
+
     const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device, format: canvasFormat, alphaMode: 'premultiplied' });
 
@@ -310,7 +326,159 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     device.queue.submit([encoder.finish()]);
     await device.queue.onSubmittedWorkDone();
 
+    return { modelUsed, width: canvas.width, height: canvas.height };
+}
+
+async function runAnime4KWebGpuTiled(tempImg, canvas, settings, device, maxTextureDimension2D) {
+    const nativeWidth = tempImg.naturalWidth || tempImg.width;
+    const nativeHeight = tempImg.naturalHeight || tempImg.height;
+    const scale = settings.selectedWebGpuScale;
+
+    const maxSourceTileWidth = Math.max(1, Math.floor(maxTextureDimension2D / scale));
+    const maxSourceTileHeight = Math.max(1, Math.floor(maxTextureDimension2D / scale));
+    const sourceTileWidth = Math.min(nativeWidth, maxSourceTileWidth);
+    const sourceTileHeight = Math.min(nativeHeight, maxSourceTileHeight);
+
+    if (sourceTileWidth <= 0 || sourceTileHeight <= 0) {
+        throw new Error(`WebGPU tiled mode failed to compute tile size for max=${maxTextureDimension2D}, scale=${scale}`);
+    }
+
+    const finalTargetWidth = Math.max(1, Math.round(nativeWidth * scale));
+    const finalTargetHeight = Math.max(1, Math.round(nativeHeight * scale));
+    canvas.width = finalTargetWidth;
+    canvas.height = finalTargetHeight;
+
+    if (canvas.width !== finalTargetWidth || canvas.height !== finalTargetHeight) {
+        throw new Error(`WebGPU tiled output canvas rejected size: ${finalTargetWidth}x${finalTargetHeight}`);
+    }
+
+    const composeCtx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+    if (!composeCtx) {
+        throw new Error('WebGPU tiled mode failed to acquire 2D canvas context for composition');
+    }
+
+    composeCtx.imageSmoothingEnabled = true;
+    composeCtx.imageSmoothingQuality = 'high';
+    composeCtx.clearRect(0, 0, finalTargetWidth, finalTargetHeight);
+
+    let modelUsed = settings.selectedWebGpuModel;
+    let tileCount = 0;
+
+    for (let sourceY = 0; sourceY < nativeHeight; sourceY += sourceTileHeight) {
+        const tileSourceHeight = Math.min(sourceTileHeight, nativeHeight - sourceY);
+
+        for (let sourceX = 0; sourceX < nativeWidth; sourceX += sourceTileWidth) {
+            const tileSourceWidth = Math.min(sourceTileWidth, nativeWidth - sourceX);
+
+            const tileSourceCanvas = document.createElement('canvas');
+            tileSourceCanvas.width = tileSourceWidth;
+            tileSourceCanvas.height = tileSourceHeight;
+            const tileSourceCtx = tileSourceCanvas.getContext('2d', { alpha: true, desynchronized: true });
+            if (!tileSourceCtx) {
+                throw new Error('WebGPU tiled mode failed to create tile source context');
+            }
+            tileSourceCtx.imageSmoothingEnabled = true;
+            tileSourceCtx.imageSmoothingQuality = 'high';
+            tileSourceCtx.drawImage(
+                tempImg,
+                sourceX,
+                sourceY,
+                tileSourceWidth,
+                tileSourceHeight,
+                0,
+                0,
+                tileSourceWidth,
+                tileSourceHeight
+            );
+
+            const tileOutputCanvas = document.createElement('canvas');
+            const tileResult = await runAnime4KWebGpuSingle(
+                tileSourceCanvas,
+                tileOutputCanvas,
+                settings,
+                device,
+                maxTextureDimension2D
+            );
+            modelUsed = tileResult.modelUsed;
+
+            const targetX = Math.round(sourceX * scale);
+            const targetY = Math.round(sourceY * scale);
+            const targetWidth = tileResult.width;
+            const targetHeight = tileResult.height;
+
+            composeCtx.drawImage(
+                tileOutputCanvas,
+                0,
+                0,
+                targetWidth,
+                targetHeight,
+                targetX,
+                targetY,
+                targetWidth,
+                targetHeight
+            );
+
+            tileCount++;
+        }
+    }
+
+    runtimeLog('webgpu:tiled-run', {
+        sourceWidth: nativeWidth,
+        sourceHeight: nativeHeight,
+        targetWidth: finalTargetWidth,
+        targetHeight: finalTargetHeight,
+        scale,
+        maxTextureDimension2D,
+        sourceTileWidth,
+        sourceTileHeight,
+        tileCount
+    });
+
     return modelUsed;
+}
+
+async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
+    const lib = getWebGpuLibrary();
+    if (!lib) {
+        throw new Error('anime4k-webgpu runtime is not loaded on window');
+    }
+
+    const device = await getWebGpuDevice();
+    const nativeWidth = tempImg.naturalWidth || tempImg.width;
+    const nativeHeight = tempImg.naturalHeight || tempImg.height;
+    if (
+        !Number.isFinite(nativeWidth) ||
+        !Number.isFinite(nativeHeight) ||
+        nativeWidth <= 0 ||
+        nativeHeight <= 0
+    ) {
+        throw new Error('Invalid source image dimensions for WebGPU');
+    }
+
+    const requestedScale = settings.selectedWebGpuScale;
+    const targetWidth = Math.max(1, Math.round(nativeWidth * requestedScale));
+    const targetHeight = Math.max(1, Math.round(nativeHeight * requestedScale));
+    const maxTextureDimension2D = device?.limits?.maxTextureDimension2D || 8192;
+
+    if (
+        nativeWidth > maxTextureDimension2D ||
+        nativeHeight > maxTextureDimension2D ||
+        targetWidth > maxTextureDimension2D ||
+        targetHeight > maxTextureDimension2D
+    ) {
+        const tiledModel = await runAnime4KWebGpuTiled(tempImg, canvas, settings, device, maxTextureDimension2D);
+        return { model: tiledModel, runMode: 'tiled' };
+    }
+
+    const singleRun = await runAnime4KWebGpuSingle(
+        tempImg,
+        canvas,
+        settings,
+        device,
+        maxTextureDimension2D
+    );
+    return { model: singleRun.modelUsed, runMode: 'single' };
 }
 
 

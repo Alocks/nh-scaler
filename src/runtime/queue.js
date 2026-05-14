@@ -192,6 +192,28 @@ async function processBackgroundQueue() {
         try {
             const tempImg = await loadSourceImage(sourceUrl);
 
+            const sourceWidth = tempImg.naturalWidth || tempImg.width;
+            const sourceHeight = tempImg.naturalHeight || tempImg.height;
+            const backend = getEffectiveBackend(itemRuntimeSettings);
+            const rawScale = backend === 'webgpu' ? itemRuntimeSettings?.selectedWebGpuScale : 2;
+            const requestedScale = Number(rawScale);
+            const effectiveScale = Number.isFinite(requestedScale) && requestedScale > 0 ? requestedScale : 1;
+            const targetWidth = Math.max(1, Math.round(sourceWidth * effectiveScale));
+            const targetHeight = Math.max(1, Math.round(sourceHeight * effectiveScale));
+
+            if (!canCanvasSupportDimensions(sourceWidth, sourceHeight)) {
+                if (pageKey) processedPageKeys.add(pageKey);
+                logQueueEvent('bg-process:skip-oversize', sourceUrl, {
+                    sourceWidth,
+                    sourceHeight,
+                    targetWidth,
+                    targetHeight,
+                    maxCanvasDimension: getMaxCanvasDimension(),
+                    backend
+                });
+                continue;
+            }
+
             if (!isForegroundTab()) {
                 logQueueEvent('bg-process:skip-hidden-after-load', sourceUrl);
                 continue;
@@ -206,6 +228,7 @@ async function processBackgroundQueue() {
                 page,
                 duration: (t4 - t3).toFixed(2) + 'ms',
                 backend: runInfo.backend,
+                runMode: runInfo.runMode,
                 model: runInfo.model
             });
 

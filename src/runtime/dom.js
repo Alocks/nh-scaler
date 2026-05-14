@@ -1,6 +1,26 @@
 // DOM manipulation for image rendering and canvas management
 
 const IMAGE_LOAD_TIMEOUT_MS = 10000;
+const HARD_MAX_CANVAS_DIMENSION = 16384;
+let cachedMaxCanvasDimension = null;
+
+function getMaxCanvasDimension() {
+    if (cachedMaxCanvasDimension !== null) return cachedMaxCanvasDimension;
+
+    // Keep a conservative cap. Some browsers accept larger width/height values
+    // but still fail to render large surfaces reliably on draw operations.
+    cachedMaxCanvasDimension = HARD_MAX_CANVAS_DIMENSION;
+    return cachedMaxCanvasDimension;
+}
+
+function canCanvasSupportDimensions(width, height) {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return false;
+    }
+
+    const max = getMaxCanvasDimension();
+    return width <= max && height <= max;
+}
 
 function hideOriginal(img) {
     img.style.setProperty('display', 'none', 'important');
@@ -13,15 +33,16 @@ function showOriginal(img) {
 }
 
 function disableUpscalingForContainer(container, sourceUrl) {
-    const img = container.querySelector('img');
-    if (img) {
+    const imgs = container.querySelectorAll('img');
+    for (const img of imgs) {
         showOriginal(img);
         img.dataset.aiProcessed = 'false';
         delete img.dataset.aiProcessingSrc;
+        delete img.dataset.aiProcessedSrc;
     }
 
-    const canvas = container.querySelector('.ai-canvas');
-    if (canvas) {
+    const canvases = container.querySelectorAll('.ai-canvas');
+    for (const canvas of canvases) {
         canvas.style.display = 'none';
         canvas.style.visibility = 'hidden';
         if (sourceUrl) {
@@ -36,11 +57,7 @@ function ensureCanvas(parent) {
         canvas = document.createElement('canvas');
         canvas.width = 0;
         canvas.height = 0;
-        if (parent.className) {
-            canvas.className = parent.className + ' ai-canvas';
-        } else {
-            canvas.className = 'ai-canvas';
-        }
+        canvas.className = 'ai-canvas';
         canvas.style.pointerEvents = 'none';
         canvas.style.display = 'none';
         canvas.style.visibility = 'hidden';
@@ -61,25 +78,25 @@ function hasRenderedCanvasForSource(img, canvas, sourceUrl) {
 }
 
 function reconcile(container) {
-    const img = container.querySelector('img');
-    if (!img) return;
-
-    const sourceUrl = img.currentSrc || img.src;
-    if (!sourceUrl) return;
-
-    const parent = img.parentElement;
-    if (!parent) return;
-
     if (getEffectiveBackend() === 'off') {
-        disableUpscalingForContainer(container, sourceUrl);
+        disableUpscalingForContainer(container);
         return;
     }
 
-    const canvas = parent.querySelector('.ai-canvas');
-    if (hasRenderedCanvasForSource(img, canvas, sourceUrl)) {
-        canvas.style.display = 'block';
-        canvas.style.visibility = 'visible';
-        hideOriginal(img);
+    const imgs = container.querySelectorAll('img');
+    for (const img of imgs) {
+        const sourceUrl = img.currentSrc || img.src;
+        if (!sourceUrl) continue;
+
+        const parent = img.parentElement;
+        if (!parent) continue;
+
+        const canvas = parent.querySelector('.ai-canvas');
+        if (hasRenderedCanvasForSource(img, canvas, sourceUrl)) {
+            canvas.style.display = 'block';
+            canvas.style.visibility = 'visible';
+            hideOriginal(img);
+        }
     }
 }
 

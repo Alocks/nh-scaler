@@ -34,7 +34,7 @@ function runtimeLog(label, data = {}) {
         window.NHScalerLog(label, data);
         return;
     }
-    console.log('[NH Scaler]', label, { ts: new Date().toISOString(), ...data });
+    console.log('[Manga Scaler]', label, { ts: new Date().toISOString(), ...data });
 }
 
 function normalizeSimplePreset(value) {
@@ -214,6 +214,16 @@ const templateSiteSourceAdapter = {
         // For matching URLs, return an object with at least:
         // { page: Number, pageKey: String }
         return null;
+    },
+    getActiveContainer(_pageUrl) {
+        // Return the Element that should be observed/processed.
+        // Return null if the reader container does not exist yet.
+        return null;
+    },
+    selectForegroundImage(_container, _pageUrl) {
+        // Return the single image element to process next.
+        // Return null when no source image is currently available.
+        return null;
     }
 };
 
@@ -292,6 +302,12 @@ const nhentaiSourceAdapter = {
             extension: match[3].toLowerCase(),
             pageKey: `${galleryId}/${page}`
         };
+    },
+    getActiveContainer() {
+        return document.querySelector('#image-container');
+    },
+    selectForegroundImage(container) {
+        return container.querySelector('img');
     }
 };
 
@@ -306,6 +322,130 @@ if (existingNhentaiAdapterIndex >= 0) {
     window.NHScalerSourceAdapters.push(nhentaiSourceAdapter);
 }
 // --- END src/runtime/sources/nhentai.js ---
+
+// --- BEGIN src/runtime/sources/comix.js ---
+// Source adapter for comix.to URL and reader/image detection
+
+const COMIX_SOURCE_ID = 'comix';
+const loggedComixParseIssues = new Set();
+
+function parseComixUrlSafely(url) {
+    if (typeof url !== 'string' || !url) return null;
+    try {
+        return new URL(url, window.location.href);
+    } catch {
+        return null;
+    }
+}
+
+function isComixHost(hostname) {
+    return typeof hostname === 'string' && /(^|\.)comix\.to$/i.test(hostname);
+}
+
+function isComixImageHost(hostname) {
+    return typeof hostname === 'string' && /(^|\.)wowpic\d+\.store$/i.test(hostname);
+}
+
+function logComixParseIssue(kind, url, extra = {}) {
+    if (typeof url !== 'string' || !url) return;
+
+    const issueKey = `${kind}|${url}`;
+    if (loggedComixParseIssues.has(issueKey)) return;
+    loggedComixParseIssues.add(issueKey);
+
+    if (typeof window.NHScalerLog === 'function') {
+        window.NHScalerLog(`url:${kind}`, { source: COMIX_SOURCE_ID, url, ...extra });
+    }
+}
+
+const comixSourceAdapter = {
+    id: COMIX_SOURCE_ID,
+    supportsUrl(url) {
+        const parsed = parseComixUrlSafely(url);
+        return !!parsed && isComixHost(parsed.hostname);
+    },
+    isReaderPageUrl(url) {
+        const parsed = parseComixUrlSafely(url);
+        if (!parsed || !isComixHost(parsed.hostname)) return false;
+        // Matches /title/{manga_title}/{chapter}
+        return /^\/title\/[^/]+\/[^/]+\/?$/i.test(parsed.pathname);
+    },
+    parseImageUrl(url) {
+        const parsed = parseComixUrlSafely(url);
+        if (!parsed || !isComixImageHost(parsed.hostname)) return null;
+
+        // Matches /ii/{hash}/{page}.{ext}
+        const match = parsed.pathname.match(/^\/ii\/([^/]+)\/(\d+)\.(webp|jpe?g|png)$/i);
+        if (!match) return null;
+
+        const hash = match[1];
+        const page = Number(match[2]);
+        if (!Number.isFinite(page)) {
+            logComixParseIssue('page-number-invalid', url, { rawPage: match[2] });
+            return null;
+        }
+
+        return {
+            parsedUrl: parsed,
+            hash,
+            page,
+            extension: match[3].toLowerCase(),
+            pageKey: `${hash}/${page}`
+        };
+    },
+    getActiveContainer() {
+        const sourceImage = Array.from(document.querySelectorAll('img[src], img[data-src]'))
+            .find((img) => {
+                const sourceUrl = img.currentSrc || img.src || img.dataset.src;
+                const parsed = parseComixUrlSafely(sourceUrl);
+                return !!parsed && isComixImageHost(parsed.hostname);
+            });
+
+        if (!sourceImage) return null;
+
+        return sourceImage.closest('.rpage-main__inner')
+            || sourceImage.closest('.rpage-page')
+            || sourceImage.parentElement
+            || sourceImage;
+    },
+    selectForegroundImage(container) {
+        const imgs = Array.from(container.querySelectorAll('img[src], img[data-src]'));
+        const sourceImgs = imgs.filter((img) => {
+            const sourceUrl = img.currentSrc || img.src || img.dataset.src;
+            const parsed = parseComixUrlSafely(sourceUrl);
+            return !!parsed && isComixImageHost(parsed.hostname);
+        });
+        if (sourceImgs.length === 0) return null;
+
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+
+        const visibleCandidate = sourceImgs.find((img) => {
+            const rect = img.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.top <= viewportHeight;
+        });
+        if (visibleCandidate) return visibleCandidate;
+
+        const unprocessedCandidate = sourceImgs.find((img) => {
+            const sourceUrl = img.currentSrc || img.src;
+            return sourceUrl && img.dataset.aiProcessedSrc !== sourceUrl;
+        });
+        if (unprocessedCandidate) return unprocessedCandidate;
+
+        return sourceImgs[0];
+    }
+};
+
+if (!Array.isArray(window.NHScalerSourceAdapters)) {
+    window.NHScalerSourceAdapters = [];
+}
+
+const existingComixAdapterIndex = window.NHScalerSourceAdapters.findIndex((adapter) => adapter?.id === COMIX_SOURCE_ID);
+if (existingComixAdapterIndex >= 0) {
+    window.NHScalerSourceAdapters[existingComixAdapterIndex] = comixSourceAdapter;
+} else {
+    window.NHScalerSourceAdapters.push(comixSourceAdapter);
+}
+// --- END src/runtime/sources/comix.js ---
 
 // --- BEGIN src/runtime/url-utils.js ---
 // Source adapter dispatch helpers
@@ -351,6 +491,28 @@ function getSourcePageKey(url) {
 function getSourcePageNumber(url) {
     return getSourceAdapterForImageUrl(url)?.parsed?.page || null;
 }
+
+function getActiveContainer(pageUrl = window.location.href) {
+    const activeAdapter = getActiveSourceAdapter(pageUrl);
+    if (activeAdapter && typeof activeAdapter?.getActiveContainer === 'function') {
+        const container = activeAdapter.getActiveContainer(pageUrl);
+        if (container instanceof Element) return container;
+    }
+
+    return document.querySelector('#image-container');
+}
+
+function selectForegroundImage(container, pageUrl = window.location.href) {
+    if (!(container instanceof Element)) return null;
+
+    const activeAdapter = getActiveSourceAdapter(pageUrl);
+    if (activeAdapter && typeof activeAdapter?.selectForegroundImage === 'function') {
+        const selectedImage = activeAdapter.selectForegroundImage(container, pageUrl);
+        if (selectedImage instanceof HTMLImageElement) return selectedImage;
+    }
+
+    return container.querySelector('img');
+}
 // --- END src/runtime/url-utils.js ---
 
 // --- BEGIN src/runtime/cache.js ---
@@ -358,7 +520,7 @@ function getSourcePageNumber(url) {
 
 const processedCache = new Map();
 const MAX_PROCESSED_CACHE_ENTRIES = 100;
-const PROCESSED_CACHE_DB_NAME = 'nh-scaler-processed-cache';
+const PROCESSED_CACHE_DB_NAME = 'manga-scaler-processed-cache';
 const PROCESSED_CACHE_STORE_NAME = 'images';
 const MIN_VALID_PROCESSED_BLOB_BYTES = 723000;
 let processedCacheDbPromise = null;
@@ -633,6 +795,7 @@ window.createBaseEngineAdapter = createBaseEngineAdapter;
 let scaler = null;
 /** @type {Promise<any> | null} */
 let scalerPromise = null;
+const WEBGL_FALLBACK_MAX_CANVAS_DIMENSION = 16384;
 
 function getRestoreUpscalePreset(lib, runtimeSettings = getRuntimePreferenceSnapshot()) {
     const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
@@ -730,7 +893,65 @@ function createEngineAdapter(overrides = {}) {
     };
 }
 
-// Adapter pattern: WebGL adapter
+function resolveWebGlFallbackScale(runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
+    const presetScaleMap = {
+        S: 2,
+        M: 2,
+        L: 2,
+        VL: 2,
+        UL: 2
+    };
+    return presetScaleMap[settings.selectedSimplePreset] || 2;
+}
+
+function getWebGlFallbackMaxCanvasDimension() {
+    return WEBGL_FALLBACK_MAX_CANVAS_DIMENSION;
+}
+
+function upscaleWith2dFallback(tempImg, canvas, scale) {
+    const sourceWidth = tempImg.naturalWidth || tempImg.width;
+    const sourceHeight = tempImg.naturalHeight || tempImg.height;
+
+    if (
+        !Number.isFinite(sourceWidth) ||
+        !Number.isFinite(sourceHeight) ||
+        sourceWidth <= 0 ||
+        sourceHeight <= 0
+    ) {
+        throw new Error('2D fallback cannot resolve valid source dimensions');
+    }
+
+    const maxCanvasDimension = getWebGlFallbackMaxCanvasDimension();
+    if (sourceWidth > maxCanvasDimension || sourceHeight > maxCanvasDimension) {
+        throw new Error(`2D fallback source exceeds canvas limits: source=${sourceWidth}x${sourceHeight}, max=${maxCanvasDimension}`);
+    }
+
+    const maxScaleByDimension = Math.min(maxCanvasDimension / sourceWidth, maxCanvasDimension / sourceHeight);
+    const effectiveScale = Math.max(1, Math.min(scale, maxScaleByDimension));
+
+    const targetWidth = Math.max(1, Math.min(maxCanvasDimension, Math.floor(sourceWidth * effectiveScale)));
+    const targetHeight = Math.max(1, Math.min(maxCanvasDimension, Math.floor(sourceHeight * effectiveScale)));
+
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+        throw new Error(`2D fallback canvas size rejected: ${targetWidth}x${targetHeight}`);
+    }
+
+    const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+    if (!ctx) {
+        throw new Error('2D fallback failed to acquire canvas context');
+    }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.clearRect(0, 0, targetWidth, targetHeight);
+    ctx.drawImage(tempImg, 0, 0, targetWidth, targetHeight);
+}
+
+
 window.WebGLAdapter = createEngineAdapter({
     isSupported: () => {
         return scaler && scaler.supported === true;
@@ -741,10 +962,38 @@ window.WebGLAdapter = createEngineAdapter({
         if (!engine.supported) {
             throw new Error('Anime4KJS WebGL pipeline not supported');
         }
-        engine.attachSource(tempImg, canvas);
-        engine.upscale();
-        engine.detachSource();
-        return `SIMPLE_${settings.selectedSimplePreset}`;
+
+        const fallbackScale = resolveWebGlFallbackScale(settings);
+
+        try {
+            engine.attachSource(tempImg, canvas);
+            engine.upscale();
+        } catch (error) {
+            runtimeLog('webgl:fallback-2d', {
+                reason: 'webgl-error',
+                error: String(error),
+                sourceWidth: tempImg.naturalWidth || tempImg.width,
+                sourceHeight: tempImg.naturalHeight || tempImg.height,
+                fallbackScale
+            });
+            upscaleWith2dFallback(tempImg, canvas, fallbackScale);
+            return `2D_FALLBACK_${fallbackScale}X`;
+        } finally {
+            engine.detachSource();
+        }
+
+        if (canvas.width > 0 && canvas.height > 0) {
+            return `SIMPLE_${settings.selectedSimplePreset}`;
+        }
+
+        runtimeLog('webgl:fallback-2d', {
+            reason: 'empty-canvas',
+            sourceWidth: tempImg.naturalWidth || tempImg.width,
+            sourceHeight: tempImg.naturalHeight || tempImg.height,
+            fallbackScale
+        });
+        upscaleWith2dFallback(tempImg, canvas, fallbackScale);
+        return `2D_FALLBACK_${fallbackScale}X`;
     },
     prewarm: async (runtimeSettings = getRuntimePreferenceSnapshot()) => {
         await getScaler(runtimeSettings);
@@ -812,6 +1061,7 @@ async function getWebGpuDevice() {
         const adapterLimits = adapter.limits;
         const defaultMaxBufferSize = 268435456;
         const defaultMaxStorageBufferBindingSize = 134217728;
+        const defaultMaxTextureDimension2D = 8192;
 
         if (adapterLimits) {
             if (
@@ -827,6 +1077,13 @@ async function getWebGpuDevice() {
                 adapterLimits.maxStorageBufferBindingSize > defaultMaxStorageBufferBindingSize
             ) {
                 requiredLimits.maxStorageBufferBindingSize = adapterLimits.maxStorageBufferBindingSize;
+            }
+            if (
+                typeof adapterLimits.maxTextureDimension2D === 'number' &&
+                Number.isFinite(adapterLimits.maxTextureDimension2D) &&
+                adapterLimits.maxTextureDimension2D > defaultMaxTextureDimension2D
+            ) {
+                requiredLimits.maxTextureDimension2D = adapterLimits.maxTextureDimension2D;
             }
         }
 
@@ -957,16 +1214,9 @@ function getOrCreateWebGpuRenderPipeline(device, format) {
     return webgpuRenderPipeline;
 }
 
-async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePreferenceSnapshot()) {
-    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
-    const lib = getWebGpuLibrary();
-    if (!lib) {
-        throw new Error('anime4k-webgpu runtime is not loaded on window');
-    }
-
-    const device = await getWebGpuDevice();
-    const nativeWidth = tempImg.naturalWidth || tempImg.width;
-    const nativeHeight = tempImg.naturalHeight || tempImg.height;
+async function runAnime4KWebGpuSingle(sourceImage, canvas, settings, device, maxTextureDimension2D) {
+    const nativeWidth = sourceImage.naturalWidth || sourceImage.width;
+    const nativeHeight = sourceImage.naturalHeight || sourceImage.height;
     if (
         !Number.isFinite(nativeWidth) ||
         !Number.isFinite(nativeHeight) ||
@@ -976,14 +1226,20 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
         throw new Error('Invalid source image dimensions for WebGPU');
     }
 
-    const context = canvas.getContext('webgpu');
-    if (!context) {
-        throw new Error('Failed to acquire WebGPU canvas context');
-    }
-
     const requestedScale = settings.selectedWebGpuScale;
-    const targetWidth = nativeWidth * requestedScale;
-    const targetHeight = nativeHeight * requestedScale;
+    const targetWidth = Math.max(1, Math.round(nativeWidth * requestedScale));
+    const targetHeight = Math.max(1, Math.round(nativeHeight * requestedScale));
+
+    if (
+        nativeWidth > maxTextureDimension2D ||
+        nativeHeight > maxTextureDimension2D ||
+        targetWidth > maxTextureDimension2D ||
+        targetHeight > maxTextureDimension2D
+    ) {
+        throw new Error(
+            `WebGPU texture limits exceeded: input=${nativeWidth}x${nativeHeight}, target=${targetWidth}x${targetHeight}, max=${maxTextureDimension2D}`
+        );
+    }
 
     const inputTexture = device.createTexture({
         size: [nativeWidth, nativeHeight, 1],
@@ -992,7 +1248,7 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     });
 
     device.queue.copyExternalImageToTexture(
-        { source: tempImg },
+        { source: sourceImage },
         { texture: inputTexture },
         [nativeWidth, nativeHeight]
     );
@@ -1000,6 +1256,10 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     const encoder = device.createCommandEncoder();
     let outputTexture = null;
     let modelUsed = settings.selectedWebGpuModel;
+    const lib = getWebGpuLibrary();
+    if (!lib) {
+        throw new Error('anime4k-webgpu runtime is not loaded on window');
+    }
 
     if (typeof lib.Anime4K === 'function') {
         const anime = new lib.Anime4K(device, inputTexture);
@@ -1038,6 +1298,11 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     canvas.width = outputTexture.width;
     canvas.height = outputTexture.height;
 
+    const context = canvas.getContext('webgpu');
+    if (!context) {
+        throw new Error('Failed to acquire WebGPU canvas context');
+    }
+
     const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device, format: canvasFormat, alphaMode: 'premultiplied' });
 
@@ -1067,10 +1332,162 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     device.queue.submit([encoder.finish()]);
     await device.queue.onSubmittedWorkDone();
 
+    return { modelUsed, width: canvas.width, height: canvas.height };
+}
+
+async function runAnime4KWebGpuTiled(tempImg, canvas, settings, device, maxTextureDimension2D) {
+    const nativeWidth = tempImg.naturalWidth || tempImg.width;
+    const nativeHeight = tempImg.naturalHeight || tempImg.height;
+    const scale = settings.selectedWebGpuScale;
+
+    const maxSourceTileWidth = Math.max(1, Math.floor(maxTextureDimension2D / scale));
+    const maxSourceTileHeight = Math.max(1, Math.floor(maxTextureDimension2D / scale));
+    const sourceTileWidth = Math.min(nativeWidth, maxSourceTileWidth);
+    const sourceTileHeight = Math.min(nativeHeight, maxSourceTileHeight);
+
+    if (sourceTileWidth <= 0 || sourceTileHeight <= 0) {
+        throw new Error(`WebGPU tiled mode failed to compute tile size for max=${maxTextureDimension2D}, scale=${scale}`);
+    }
+
+    const finalTargetWidth = Math.max(1, Math.round(nativeWidth * scale));
+    const finalTargetHeight = Math.max(1, Math.round(nativeHeight * scale));
+    canvas.width = finalTargetWidth;
+    canvas.height = finalTargetHeight;
+
+    if (canvas.width !== finalTargetWidth || canvas.height !== finalTargetHeight) {
+        throw new Error(`WebGPU tiled output canvas rejected size: ${finalTargetWidth}x${finalTargetHeight}`);
+    }
+
+    const composeCtx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+    if (!composeCtx) {
+        throw new Error('WebGPU tiled mode failed to acquire 2D canvas context for composition');
+    }
+
+    composeCtx.imageSmoothingEnabled = true;
+    composeCtx.imageSmoothingQuality = 'high';
+    composeCtx.clearRect(0, 0, finalTargetWidth, finalTargetHeight);
+
+    let modelUsed = settings.selectedWebGpuModel;
+    let tileCount = 0;
+
+    for (let sourceY = 0; sourceY < nativeHeight; sourceY += sourceTileHeight) {
+        const tileSourceHeight = Math.min(sourceTileHeight, nativeHeight - sourceY);
+
+        for (let sourceX = 0; sourceX < nativeWidth; sourceX += sourceTileWidth) {
+            const tileSourceWidth = Math.min(sourceTileWidth, nativeWidth - sourceX);
+
+            const tileSourceCanvas = document.createElement('canvas');
+            tileSourceCanvas.width = tileSourceWidth;
+            tileSourceCanvas.height = tileSourceHeight;
+            const tileSourceCtx = tileSourceCanvas.getContext('2d', { alpha: true, desynchronized: true });
+            if (!tileSourceCtx) {
+                throw new Error('WebGPU tiled mode failed to create tile source context');
+            }
+            tileSourceCtx.imageSmoothingEnabled = true;
+            tileSourceCtx.imageSmoothingQuality = 'high';
+            tileSourceCtx.drawImage(
+                tempImg,
+                sourceX,
+                sourceY,
+                tileSourceWidth,
+                tileSourceHeight,
+                0,
+                0,
+                tileSourceWidth,
+                tileSourceHeight
+            );
+
+            const tileOutputCanvas = document.createElement('canvas');
+            const tileResult = await runAnime4KWebGpuSingle(
+                tileSourceCanvas,
+                tileOutputCanvas,
+                settings,
+                device,
+                maxTextureDimension2D
+            );
+            modelUsed = tileResult.modelUsed;
+
+            const targetX = Math.round(sourceX * scale);
+            const targetY = Math.round(sourceY * scale);
+            const targetWidth = tileResult.width;
+            const targetHeight = tileResult.height;
+
+            composeCtx.drawImage(
+                tileOutputCanvas,
+                0,
+                0,
+                targetWidth,
+                targetHeight,
+                targetX,
+                targetY,
+                targetWidth,
+                targetHeight
+            );
+
+            tileCount++;
+        }
+    }
+
+    runtimeLog('webgpu:tiled-run', {
+        sourceWidth: nativeWidth,
+        sourceHeight: nativeHeight,
+        targetWidth: finalTargetWidth,
+        targetHeight: finalTargetHeight,
+        scale,
+        maxTextureDimension2D,
+        sourceTileWidth,
+        sourceTileHeight,
+        tileCount
+    });
+
     return modelUsed;
 }
 
-// Adapter pattern: WebGPU adapter
+async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
+    const lib = getWebGpuLibrary();
+    if (!lib) {
+        throw new Error('anime4k-webgpu runtime is not loaded on window');
+    }
+
+    const device = await getWebGpuDevice();
+    const nativeWidth = tempImg.naturalWidth || tempImg.width;
+    const nativeHeight = tempImg.naturalHeight || tempImg.height;
+    if (
+        !Number.isFinite(nativeWidth) ||
+        !Number.isFinite(nativeHeight) ||
+        nativeWidth <= 0 ||
+        nativeHeight <= 0
+    ) {
+        throw new Error('Invalid source image dimensions for WebGPU');
+    }
+
+    const requestedScale = settings.selectedWebGpuScale;
+    const targetWidth = Math.max(1, Math.round(nativeWidth * requestedScale));
+    const targetHeight = Math.max(1, Math.round(nativeHeight * requestedScale));
+    const maxTextureDimension2D = device?.limits?.maxTextureDimension2D || 8192;
+
+    if (
+        nativeWidth > maxTextureDimension2D ||
+        nativeHeight > maxTextureDimension2D ||
+        targetWidth > maxTextureDimension2D ||
+        targetHeight > maxTextureDimension2D
+    ) {
+        const tiledModel = await runAnime4KWebGpuTiled(tempImg, canvas, settings, device, maxTextureDimension2D);
+        return { model: tiledModel, runMode: 'tiled' };
+    }
+
+    const singleRun = await runAnime4KWebGpuSingle(
+        tempImg,
+        canvas,
+        settings,
+        device,
+        maxTextureDimension2D
+    );
+    return { model: singleRun.modelUsed, runMode: 'single' };
+}
+
+
 window.WebGPUAdapter = createEngineAdapter({
     isSupported: () => {
         if (!navigator?.gpu) return false;
@@ -1099,6 +1516,20 @@ window.WebGPUAdapter = createEngineAdapter({
 ﻿// Dispatcher — adapter implementations are in src/runtime/adapters/engines/
 
 const REQUIRED_ADAPTER_METHODS = ['isSupported', 'upscale', 'prewarm', 'reset'];
+
+function normalizeUpscaleResult(result) {
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+        return {
+            model: typeof result.model === 'string' ? result.model : 'unknown',
+            runMode: typeof result.runMode === 'string' ? result.runMode : null
+        };
+    }
+
+    return {
+        model: typeof result === 'string' ? result : 'unknown',
+        runMode: null
+    };
+}
 
 function getValidatedAdapter(adapterName) {
     const adapter = window[adapterName];
@@ -1140,16 +1571,18 @@ async function upscaleWithSelectedBackend(tempImg, canvas, runtimeSettings = get
     if (backend === 'webgpu') {
         try {
             const webGpuAdapter = getValidatedAdapter('WebGPUAdapter');
-            const model = await webGpuAdapter.upscale(tempImg, canvas, settings);
-            return { backend: 'webgpu', model };
+            const result = await webGpuAdapter.upscale(tempImg, canvas, settings);
+            const normalized = normalizeUpscaleResult(result);
+            return { backend: 'webgpu', model: normalized.model, runMode: normalized.runMode };
         } catch (err) {
             runtimeLog('webgpu:fallback-to-webgl', { error: String(err) });
         }
     }
 
     const webGlAdapter = getValidatedAdapter('WebGLAdapter');
-    const model = await webGlAdapter.upscale(tempImg, canvas, settings);
-    return { backend: 'webgl', model };
+    const webGlResult = await webGlAdapter.upscale(tempImg, canvas, settings);
+    const normalized = normalizeUpscaleResult(webGlResult);
+    return { backend: 'webgl', model: normalized.model, runMode: normalized.runMode };
 }
 
 async function prewarmSelectedBackend() {
@@ -1182,6 +1615,26 @@ function resetBackendRuntimeState() {
 // DOM manipulation for image rendering and canvas management
 
 const IMAGE_LOAD_TIMEOUT_MS = 10000;
+const HARD_MAX_CANVAS_DIMENSION = 16384;
+let cachedMaxCanvasDimension = null;
+
+function getMaxCanvasDimension() {
+    if (cachedMaxCanvasDimension !== null) return cachedMaxCanvasDimension;
+
+    // Keep a conservative cap. Some browsers accept larger width/height values
+    // but still fail to render large surfaces reliably on draw operations.
+    cachedMaxCanvasDimension = HARD_MAX_CANVAS_DIMENSION;
+    return cachedMaxCanvasDimension;
+}
+
+function canCanvasSupportDimensions(width, height) {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return false;
+    }
+
+    const max = getMaxCanvasDimension();
+    return width <= max && height <= max;
+}
 
 function hideOriginal(img) {
     img.style.setProperty('display', 'none', 'important');
@@ -1194,15 +1647,16 @@ function showOriginal(img) {
 }
 
 function disableUpscalingForContainer(container, sourceUrl) {
-    const img = container.querySelector('img');
-    if (img) {
+    const imgs = container.querySelectorAll('img');
+    for (const img of imgs) {
         showOriginal(img);
         img.dataset.aiProcessed = 'false';
         delete img.dataset.aiProcessingSrc;
+        delete img.dataset.aiProcessedSrc;
     }
 
-    const canvas = container.querySelector('.ai-canvas');
-    if (canvas) {
+    const canvases = container.querySelectorAll('.ai-canvas');
+    for (const canvas of canvases) {
         canvas.style.display = 'none';
         canvas.style.visibility = 'hidden';
         if (sourceUrl) {
@@ -1217,11 +1671,7 @@ function ensureCanvas(parent) {
         canvas = document.createElement('canvas');
         canvas.width = 0;
         canvas.height = 0;
-        if (parent.className) {
-            canvas.className = parent.className + ' ai-canvas';
-        } else {
-            canvas.className = 'ai-canvas';
-        }
+        canvas.className = 'ai-canvas';
         canvas.style.pointerEvents = 'none';
         canvas.style.display = 'none';
         canvas.style.visibility = 'hidden';
@@ -1242,25 +1692,25 @@ function hasRenderedCanvasForSource(img, canvas, sourceUrl) {
 }
 
 function reconcile(container) {
-    const img = container.querySelector('img');
-    if (!img) return;
-
-    const sourceUrl = img.currentSrc || img.src;
-    if (!sourceUrl) return;
-
-    const parent = img.parentElement;
-    if (!parent) return;
-
     if (getEffectiveBackend() === 'off') {
-        disableUpscalingForContainer(container, sourceUrl);
+        disableUpscalingForContainer(container);
         return;
     }
 
-    const canvas = parent.querySelector('.ai-canvas');
-    if (hasRenderedCanvasForSource(img, canvas, sourceUrl)) {
-        canvas.style.display = 'block';
-        canvas.style.visibility = 'visible';
-        hideOriginal(img);
+    const imgs = container.querySelectorAll('img');
+    for (const img of imgs) {
+        const sourceUrl = img.currentSrc || img.src;
+        if (!sourceUrl) continue;
+
+        const parent = img.parentElement;
+        if (!parent) continue;
+
+        const canvas = parent.querySelector('.ai-canvas');
+        if (hasRenderedCanvasForSource(img, canvas, sourceUrl)) {
+            canvas.style.display = 'block';
+            canvas.style.visibility = 'visible';
+            hideOriginal(img);
+        }
     }
 }
 
@@ -1521,6 +1971,28 @@ async function processBackgroundQueue() {
         try {
             const tempImg = await loadSourceImage(sourceUrl);
 
+            const sourceWidth = tempImg.naturalWidth || tempImg.width;
+            const sourceHeight = tempImg.naturalHeight || tempImg.height;
+            const backend = getEffectiveBackend(itemRuntimeSettings);
+            const rawScale = backend === 'webgpu' ? itemRuntimeSettings?.selectedWebGpuScale : 2;
+            const requestedScale = Number(rawScale);
+            const effectiveScale = Number.isFinite(requestedScale) && requestedScale > 0 ? requestedScale : 1;
+            const targetWidth = Math.max(1, Math.round(sourceWidth * effectiveScale));
+            const targetHeight = Math.max(1, Math.round(sourceHeight * effectiveScale));
+
+            if (!canCanvasSupportDimensions(sourceWidth, sourceHeight)) {
+                if (pageKey) processedPageKeys.add(pageKey);
+                logQueueEvent('bg-process:skip-oversize', sourceUrl, {
+                    sourceWidth,
+                    sourceHeight,
+                    targetWidth,
+                    targetHeight,
+                    maxCanvasDimension: getMaxCanvasDimension(),
+                    backend
+                });
+                continue;
+            }
+
             if (!isForegroundTab()) {
                 logQueueEvent('bg-process:skip-hidden-after-load', sourceUrl);
                 continue;
@@ -1535,6 +2007,7 @@ async function processBackgroundQueue() {
                 page,
                 duration: (t4 - t3).toFixed(2) + 'ms',
                 backend: runInfo.backend,
+                runMode: runInfo.runMode,
                 model: runInfo.model
             });
 
@@ -1631,15 +2104,15 @@ const BOOT_DIAGNOSTICS_PHASE_INITIAL = 'initial';
 const BOOT_DIAGNOSTICS_PHASE_READY = 'ready';
 
 let jobCounter = 0;
-const CLEAR_CACHE_MESSAGE_TYPE = 'nh-scaler:clear-cache';
-const GET_DIAGNOSTICS_MESSAGE_TYPE = 'nh-scaler:get-diagnostics';
+const CLEAR_CACHE_MESSAGE_TYPE = 'manga-scaler:clear-cache';
+const GET_DIAGNOSTICS_MESSAGE_TYPE = 'manga-scaler:get-diagnostics';
 
 function log(label, data = {}) {
     if (typeof window.NHScalerLog === 'function') {
         window.NHScalerLog(label, data);
         return;
     }
-    console.log('[NH Scaler]', label, { ts: new Date().toISOString(), ...data });
+    console.log('[Manga Scaler]', label, { ts: new Date().toISOString(), ...data });
 }
 
 function getAdapterMethodStatus(adapterName) {
@@ -1694,8 +2167,23 @@ function isForegroundTab() {
     return document.visibilityState === 'visible' && !document.hidden;
 }
 
-function getActiveContainer() {
-    return document.querySelector('#image-container');
+function getRequestedScaleForBackend(runtimeSettings) {
+    const backend = getEffectiveBackend(runtimeSettings);
+    const rawScale = backend === 'webgpu'
+        ? runtimeSettings?.selectedWebGpuScale
+        : runtimeSettings?.selectedWebGlScale;
+    const scale = Number(rawScale);
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+function shouldSkipSourceAfterError(error) {
+    const message = String(error || '');
+    return (
+        message.includes('Canvas output is empty after upscale') ||
+        message.includes('WebGPU texture limits exceeded') ||
+        message.includes('Failed to acquire WebGPU canvas context') ||
+        message.includes('Invalid source image dimensions for WebGPU')
+    );
 }
 
 function resetProcessedRuntimeState() {
@@ -1861,11 +2349,12 @@ async function processCurrentImage(container) {
 
     await Promise.all([backendReadyPromise, webgpuModelReadyPromise, webgpuScaleReadyPromise]);
 
-    const img = container.querySelector('img');
+    const img = selectForegroundImage(container);
     if (!img) return;
 
     const sourceUrl = img.currentSrc || img.src;
     if (!sourceUrl) return;
+    if (img.dataset.aiSkipSource === sourceUrl) return;
 
     const runtimeSettings = getRuntimePreferenceSnapshot();
 
@@ -1876,6 +2365,32 @@ async function processCurrentImage(container) {
 
     const parent = img.parentElement;
     if (!parent) return;
+
+    const sourceWidth = img.naturalWidth || img.width;
+    const sourceHeight = img.naturalHeight || img.height;
+    const requestedScale = getRequestedScaleForBackend(runtimeSettings);
+
+    if (
+        Number.isFinite(sourceWidth) &&
+        Number.isFinite(sourceHeight) &&
+        sourceWidth > 0 &&
+        sourceHeight > 0 &&
+        !canCanvasSupportDimensions(sourceWidth, sourceHeight)
+    ) {
+        img.dataset.aiSkipSource = sourceUrl;
+        img.dataset.aiProcessed = 'false';
+        disableUpscalingForContainer(container, sourceUrl);
+        log('process:skip-oversize', {
+            sourceUrl,
+            page: getSourcePageNumber(sourceUrl),
+            sourceWidth,
+            sourceHeight,
+            targetWidth: Math.max(1, Math.round(sourceWidth * requestedScale)),
+            targetHeight: Math.max(1, Math.round(sourceHeight * requestedScale)),
+            maxCanvasDimension: getMaxCanvasDimension()
+        });
+        return;
+    }
 
     const existingCanvas = parent.querySelector('.ai-canvas');
 
@@ -1920,6 +2435,7 @@ async function processCurrentImage(container) {
     const jobId = String(++jobCounter);
     img.dataset.aiJobId = jobId;
     img.dataset.aiProcessingSrc = sourceUrl;
+    delete img.dataset.aiSkipSource;
     img.dataset.aiProcessed = 'true';
     const page = getSourcePageNumber(sourceUrl);
     if (page == null) {
@@ -1931,6 +2447,28 @@ async function processCurrentImage(container) {
 
     try {
         const tempImg = await loadSourceImage(sourceUrl);
+        const loadedWidth = tempImg.naturalWidth || tempImg.width;
+        const loadedHeight = tempImg.naturalHeight || tempImg.height;
+        const loadedTargetWidth = Math.max(1, Math.round(loadedWidth * requestedScale));
+        const loadedTargetHeight = Math.max(1, Math.round(loadedHeight * requestedScale));
+
+        if (!canCanvasSupportDimensions(loadedWidth, loadedHeight)) {
+            img.dataset.aiSkipSource = sourceUrl;
+            img.dataset.aiProcessed = 'false';
+            delete img.dataset.aiProcessingSrc;
+            disableUpscalingForContainer(container, sourceUrl);
+            log('process:skip-oversize', {
+                sourceUrl,
+                page,
+                sourceWidth: loadedWidth,
+                sourceHeight: loadedHeight,
+                targetWidth: loadedTargetWidth,
+                targetHeight: loadedTargetHeight,
+                maxCanvasDimension: getMaxCanvasDimension(),
+                phase: 'post-load'
+            });
+            return;
+        }
 
         const latestSrc = img.currentSrc || img.src;
         if (isStaleForegroundJob(img, jobId, sourceUrl, canvas, parent)) {
@@ -1947,6 +2485,7 @@ async function processCurrentImage(container) {
             page,
             duration: (t4 - t3).toFixed(2) + 'ms',
             backend: runInfo.backend,
+            runMode: runInfo.runMode,
             model: runInfo.model,
         });
 
@@ -1994,6 +2533,9 @@ async function processCurrentImage(container) {
         hideOriginal(img);
         reconcile(container);
     } catch (err) {
+        if (shouldSkipSourceAfterError(err)) {
+            img.dataset.aiSkipSource = sourceUrl;
+        }
         img.dataset.aiProcessed = 'false';
         delete img.dataset.aiProcessingSrc;
         showOriginal(img);

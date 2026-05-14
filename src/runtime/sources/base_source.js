@@ -18,6 +18,16 @@ const templateSiteSourceAdapter = {
         // For matching URLs, return an object with at least:
         // { page: Number, pageKey: String }
         return null;
+    },
+    getActiveContainer(_pageUrl) {
+        // Return the Element that should be observed/processed.
+        // Return null if the reader container does not exist yet.
+        return null;
+    },
+    selectForegroundImage(_container, _pageUrl) {
+        // Return the single image element to process next.
+        // Return null when no source image is currently available.
+        return null;
     }
 };
 

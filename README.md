@@ -2,7 +2,7 @@
 Try checking Before and After sample bellow and check if it is really worth. 
 I tested in my 1080p monitor and the difference is very small compared to my 4K monitor.
 
-## nh-scaler
+## manga-scaler
 A GPU-accelerated Chrome extension designed to upscale and sharpen images in real-time. With processing speeds as low as 100ms, the enhancement is seamless and unnoticeable. It is ideal for 4K monitor users looking to improve image clarity for reading.
 
 Available engines and profiles:

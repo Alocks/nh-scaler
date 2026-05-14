@@ -2,6 +2,20 @@
 
 const REQUIRED_ADAPTER_METHODS = ['isSupported', 'upscale', 'prewarm', 'reset'];
 
+function normalizeUpscaleResult(result) {
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+        return {
+            model: typeof result.model === 'string' ? result.model : 'unknown',
+            runMode: typeof result.runMode === 'string' ? result.runMode : null
+        };
+    }
+
+    return {
+        model: typeof result === 'string' ? result : 'unknown',
+        runMode: null
+    };
+}
+
 function getValidatedAdapter(adapterName) {
     const adapter = window[adapterName];
     if (!adapter || typeof adapter !== 'object') {
@@ -42,16 +56,18 @@ async function upscaleWithSelectedBackend(tempImg, canvas, runtimeSettings = get
     if (backend === 'webgpu') {
         try {
             const webGpuAdapter = getValidatedAdapter('WebGPUAdapter');
-            const model = await webGpuAdapter.upscale(tempImg, canvas, settings);
-            return { backend: 'webgpu', model };
+            const result = await webGpuAdapter.upscale(tempImg, canvas, settings);
+            const normalized = normalizeUpscaleResult(result);
+            return { backend: 'webgpu', model: normalized.model, runMode: normalized.runMode };
         } catch (err) {
             runtimeLog('webgpu:fallback-to-webgl', { error: String(err) });
         }
     }
 
     const webGlAdapter = getValidatedAdapter('WebGLAdapter');
-    const model = await webGlAdapter.upscale(tempImg, canvas, settings);
-    return { backend: 'webgl', model };
+    const webGlResult = await webGlAdapter.upscale(tempImg, canvas, settings);
+    const normalized = normalizeUpscaleResult(webGlResult);
+    return { backend: 'webgl', model: normalized.model, runMode: normalized.runMode };
 }
 
 async function prewarmSelectedBackend() {

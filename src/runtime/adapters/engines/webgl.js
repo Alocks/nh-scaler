@@ -4,6 +4,7 @@
 let scaler = null;
 /** @type {Promise<any> | null} */
 let scalerPromise = null;
+const WEBGL_FALLBACK_MAX_CANVAS_DIMENSION = 16384;
 
 function getRestoreUpscalePreset(lib, runtimeSettings = getRuntimePreferenceSnapshot()) {
     const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
@@ -101,6 +102,64 @@ function createEngineAdapter(overrides = {}) {
     };
 }
 
+function resolveWebGlFallbackScale(runtimeSettings = getRuntimePreferenceSnapshot()) {
+    const settings = getNormalizedRuntimePreferenceSnapshot(runtimeSettings);
+    const presetScaleMap = {
+        S: 2,
+        M: 2,
+        L: 2,
+        VL: 2,
+        UL: 2
+    };
+    return presetScaleMap[settings.selectedSimplePreset] || 2;
+}
+
+function getWebGlFallbackMaxCanvasDimension() {
+    return WEBGL_FALLBACK_MAX_CANVAS_DIMENSION;
+}
+
+function upscaleWith2dFallback(tempImg, canvas, scale) {
+    const sourceWidth = tempImg.naturalWidth || tempImg.width;
+    const sourceHeight = tempImg.naturalHeight || tempImg.height;
+
+    if (
+        !Number.isFinite(sourceWidth) ||
+        !Number.isFinite(sourceHeight) ||
+        sourceWidth <= 0 ||
+        sourceHeight <= 0
+    ) {
+        throw new Error('2D fallback cannot resolve valid source dimensions');
+    }
+
+    const maxCanvasDimension = getWebGlFallbackMaxCanvasDimension();
+    if (sourceWidth > maxCanvasDimension || sourceHeight > maxCanvasDimension) {
+        throw new Error(`2D fallback source exceeds canvas limits: source=${sourceWidth}x${sourceHeight}, max=${maxCanvasDimension}`);
+    }
+
+    const maxScaleByDimension = Math.min(maxCanvasDimension / sourceWidth, maxCanvasDimension / sourceHeight);
+    const effectiveScale = Math.max(1, Math.min(scale, maxScaleByDimension));
+
+    const targetWidth = Math.max(1, Math.min(maxCanvasDimension, Math.floor(sourceWidth * effectiveScale)));
+    const targetHeight = Math.max(1, Math.min(maxCanvasDimension, Math.floor(sourceHeight * effectiveScale)));
+
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+        throw new Error(`2D fallback canvas size rejected: ${targetWidth}x${targetHeight}`);
+    }
+
+    const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+    if (!ctx) {
+        throw new Error('2D fallback failed to acquire canvas context');
+    }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.clearRect(0, 0, targetWidth, targetHeight);
+    ctx.drawImage(tempImg, 0, 0, targetWidth, targetHeight);
+}
+
 
 window.WebGLAdapter = createEngineAdapter({
     isSupported: () => {
@@ -112,10 +171,38 @@ window.WebGLAdapter = createEngineAdapter({
         if (!engine.supported) {
             throw new Error('Anime4KJS WebGL pipeline not supported');
         }
-        engine.attachSource(tempImg, canvas);
-        engine.upscale();
-        engine.detachSource();
-        return `SIMPLE_${settings.selectedSimplePreset}`;
+
+        const fallbackScale = resolveWebGlFallbackScale(settings);
+
+        try {
+            engine.attachSource(tempImg, canvas);
+            engine.upscale();
+        } catch (error) {
+            runtimeLog('webgl:fallback-2d', {
+                reason: 'webgl-error',
+                error: String(error),
+                sourceWidth: tempImg.naturalWidth || tempImg.width,
+                sourceHeight: tempImg.naturalHeight || tempImg.height,
+                fallbackScale
+            });
+            upscaleWith2dFallback(tempImg, canvas, fallbackScale);
+            return `2D_FALLBACK_${fallbackScale}X`;
+        } finally {
+            engine.detachSource();
+        }
+
+        if (canvas.width > 0 && canvas.height > 0) {
+            return `SIMPLE_${settings.selectedSimplePreset}`;
+        }
+
+        runtimeLog('webgl:fallback-2d', {
+            reason: 'empty-canvas',
+            sourceWidth: tempImg.naturalWidth || tempImg.width,
+            sourceHeight: tempImg.naturalHeight || tempImg.height,
+            fallbackScale
+        });
+        upscaleWith2dFallback(tempImg, canvas, fallbackScale);
+        return `2D_FALLBACK_${fallbackScale}X`;
     },
     prewarm: async (runtimeSettings = getRuntimePreferenceSnapshot()) => {
         await getScaler(runtimeSettings);

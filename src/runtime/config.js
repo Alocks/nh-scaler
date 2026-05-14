@@ -30,7 +30,7 @@ function runtimeLog(label, data = {}) {
         window.NHScalerLog(label, data);
         return;
     }
-    console.log('[NH Scaler]', label, { ts: new Date().toISOString(), ...data });
+    console.log('[Manga Scaler]', label, { ts: new Date().toISOString(), ...data });
 }
 
 function normalizeSimplePreset(value) {

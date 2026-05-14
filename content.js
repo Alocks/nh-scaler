@@ -9,7 +9,7 @@ const ALWAYS_LOG_LABELS = new Set([
 
 function log(label, data = {}) {
     if (!DEBUG && !ALWAYS_LOG_LABELS.has(label)) return;
-    console.log('[NH Scaler]', label, { ts: new Date().toISOString(), ...data });
+    console.log('[Manga Scaler]', label, { ts: new Date().toISOString(), ...data });
 }
 
 window.NHScalerLog = log;

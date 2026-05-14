@@ -2,7 +2,7 @@
 
 const processedCache = new Map();
 const MAX_PROCESSED_CACHE_ENTRIES = 100;
-const PROCESSED_CACHE_DB_NAME = 'nh-scaler-processed-cache';
+const PROCESSED_CACHE_DB_NAME = 'manga-scaler-processed-cache';
 const PROCESSED_CACHE_STORE_NAME = 'images';
 const MIN_VALID_PROCESSED_BLOB_BYTES = 723000;
 let processedCacheDbPromise = null;

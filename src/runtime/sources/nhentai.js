@@ -60,6 +60,12 @@ const nhentaiSourceAdapter = {
             extension: match[3].toLowerCase(),
             pageKey: `${galleryId}/${page}`
         };
+    },
+    getActiveContainer() {
+        return document.querySelector('#image-container');
+    },
+    selectForegroundImage(container) {
+        return container.querySelector('img');
     }
 };
 
