@@ -9,7 +9,11 @@ const DEFAULT_WEBGPU_MODEL = 'ModeA';
 const DEFAULT_WEBGPU_SCALE = 2;
 const CLEAR_CACHE_MESSAGE_TYPE = 'manga-scaler:clear-cache';
 const GET_DIAGNOSTICS_MESSAGE_TYPE = 'manga-scaler:get-diagnostics';
-const NHENTAI_TAB_URL_PATTERN = /^https?:\/\/(?:[^/]+\.)?nhentai\.net\//i;
+const SUPPORTED_TAB_URL_PATTERNS = [
+  /^https?:\/\/(?:[^/]+\.)?nhentai\.net\//i,
+  /^https?:\/\/(?:[^/]+\.)?comix\.to\//i,
+  /^https?:\/\/(?:[^/]+\.)?mangadex\.org\//i
+];
 const POPUP_MESSAGE_TIMEOUT_MS = 5000;
 let isWebGpuSupported = true;
 let diagnosticsRefreshTimer = null;
@@ -34,8 +38,8 @@ function setCacheActionStatus(message, tone = '') {
   }
 }
 
-function isNhentaiTab(tab) {
-  return typeof tab?.url === 'string' && NHENTAI_TAB_URL_PATTERN.test(tab.url);
+function isSupportedMangaTab(tab) {
+  return typeof tab?.url === 'string' && SUPPORTED_TAB_URL_PATTERNS.some((pattern) => pattern.test(tab.url));
 }
 
 function setRuntimeDiagnosticsText(text) {
@@ -112,8 +116,8 @@ function formatRuntimeDiagnostics(diagnostics) {
 
 async function refreshRuntimeDiagnostics() {
   const activeTab = await getActiveTab();
-  if (!activeTab?.id || !isNhentaiTab(activeTab)) {
-    setRuntimeDiagnosticsText('Open an nhentai tab to view runtime diagnostics.');
+  if (!activeTab?.id || !isSupportedMangaTab(activeTab)) {
+    setRuntimeDiagnosticsText('Open a supported manga tab to view runtime diagnostics.');
     return;
   }
 
@@ -127,7 +131,7 @@ async function refreshRuntimeDiagnostics() {
     const message = String(error?.message || 'Diagnostics unavailable');
     setRuntimeDiagnosticsText(
       message.includes('Receiving end does not exist')
-        ? 'Runtime not ready in this tab yet. Reload the nhentai page.'
+        ? 'Runtime not ready in this tab yet. Reload the manga page.'
         : `Diagnostics unavailable: ${message}`
     );
   }
@@ -143,11 +147,11 @@ async function refreshCacheActionAvailability() {
 
   try {
     const activeTab = await getActiveTab();
-    const isEligible = !!activeTab?.id && isNhentaiTab(activeTab);
+    const isEligible = !!activeTab?.id && isSupportedMangaTab(activeTab);
     clearCacheButton.disabled = !isEligible;
 
     if (!isEligible) {
-      setCacheActionStatus('Open an nhentai tab to clear cached images.');
+      setCacheActionStatus('Open a supported manga tab to clear cached images.');
       return;
     }
 
@@ -209,7 +213,6 @@ function setActiveEnginePanel(backend) {
   }
 }
 
-// Load current settings and set radio buttons
 async function loadCurrentSettings() {
   isWebGpuSupported = await detectWebGpuSupport();
 
@@ -244,7 +247,6 @@ async function loadCurrentSettings() {
   setActiveEnginePanel(currentBackend);
 }
 
-// Save preset on selection change
 document.querySelectorAll('input[name="preset"]').forEach((radio) => {
   radio.addEventListener('change', async (e) => {
     if (e.target.checked) {
@@ -253,7 +255,6 @@ document.querySelectorAll('input[name="preset"]').forEach((radio) => {
   });
 });
 
-// Save backend on tab click
 document.querySelectorAll('.tab-pill').forEach((tab) => {
   tab.addEventListener('click', async () => {
     const backend = String(tab.dataset.tab || DEFAULT_ENGINE_BACKEND).toLowerCase();
@@ -265,7 +266,6 @@ document.querySelectorAll('.tab-pill').forEach((tab) => {
   });
 });
 
-// Save webgpu model on selection change
 document.querySelectorAll('input[name="webgpuModel"]').forEach((radio) => {
   radio.addEventListener('change', async (e) => {
     if (e.target.checked) {
@@ -296,7 +296,6 @@ if (chrome?.storage?.onChanged) {
   });
 }
 
-// Load on popup open
 loadCurrentSettings();
 refreshCacheActionAvailability();
 refreshRuntimeDiagnostics();
@@ -309,11 +308,11 @@ if (clearCacheButton) {
     try {
       const activeTab = await getActiveTab();
       if (!activeTab?.id) {
-        throw new Error('Open an nhentai tab first');
+        throw new Error('Open a supported manga tab first');
       }
 
-      if (!isNhentaiTab(activeTab)) {
-        throw new Error('Open an nhentai tab first');
+      if (!isSupportedMangaTab(activeTab)) {
+        throw new Error('Open a supported manga tab first');
       }
 
       const response = await sendMessageWithTimeout(activeTab.id, { type: CLEAR_CACHE_MESSAGE_TYPE });
@@ -326,8 +325,8 @@ if (clearCacheButton) {
       const message = String(error?.message || '');
       setCacheActionStatus(
         message.includes('Receiving end does not exist')
-          ? 'This tab is not ready yet. Reload the nhentai page and try again.'
-          : error?.message || 'Could not clear cache. Open an nhentai reader tab and try again.',
+          ? 'This tab is not ready yet. Reload the manga page and try again.'
+          : error?.message || 'Could not clear cache. Open a supported manga tab and try again.',
         'error'
       );
     } finally {
