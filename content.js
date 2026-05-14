@@ -23,10 +23,10 @@ if (!document.querySelector('style[data-ai-scaler]')) {
         }
 
         .ai-canvas {
-            max-width: 100%;
-            max-height: 100%;
-            width: auto;
-            height: auto;
+            max-width: 100% !important;
+            max-height: 100vh !important;
+            width: auto !important;
+            height: auto !important;
             display: block;
             margin: auto;
         }

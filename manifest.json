@@ -3,7 +3,7 @@
   "name": "Manga Scaler",
   "version": "1.0",
   "permissions": ["declarativeNetRequest", "storage"],
-  "host_permissions": ["*://*.nhentai.net/*", "*://nhentai.net/*", "*://*.comix.to/*", "*://comix.to/*", "*://*.wowpic2.store/*"],
+  "host_permissions": ["*://*.nhentai.net/*", "*://nhentai.net/*", "*://*.comix.to/*", "*://comix.to/*", "*://*.wowpic2.store/*", "*://mangadex.org/*", "*://*.mangadex.org/*", "*://uploads.mangadex.org/*"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Manga Scaler"
@@ -16,7 +16,7 @@
     }]
   },
   "content_scripts": [{
-    "matches": ["*://*.nhentai.net/*", "*://nhentai.net/*", "*://*.comix.to/*", "*://comix.to/*"],
+    "matches": ["*://*.nhentai.net/*", "*://nhentai.net/*", "*://*.comix.to/*", "*://comix.to/*", "*://mangadex.org/*", "*://*.mangadex.org/*"],
     "js": [
       "./node_modules/anime4k-webgpu/lib/index.js",
       "./node_modules/anime4k-webgl/anime4k.js",

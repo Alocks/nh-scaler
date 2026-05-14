@@ -51,7 +51,38 @@ function disableUpscalingForContainer(container, sourceUrl) {
     }
 }
 
-function ensureCanvas(parent) {
+function syncCanvasPresentation(canvas, img) {
+    if (!(canvas instanceof HTMLCanvasElement) || !(img instanceof HTMLImageElement)) return;
+
+    const classNames = ['ai-canvas'];
+    for (const cls of img.classList) {
+        // Do not inherit host generic image class names that can force full-size fills.
+        if (cls !== 'ai-canvas' && cls !== 'img') classNames.push(cls);
+    }
+    canvas.className = classNames.join(' ');
+
+    // Carry over some responsive behavior from the source image but avoid
+    // propagating visibility/display toggles managed by this runtime.
+    canvas.style.width = img.style.width || '';
+    canvas.style.height = img.style.height || '';
+    canvas.style.maxWidth = img.style.maxWidth || '';
+    canvas.style.maxHeight = img.style.maxHeight || '';
+    canvas.style.minWidth = img.style.minWidth || '';
+    canvas.style.minHeight = img.style.minHeight || '';
+    canvas.style.objectFit = img.style.objectFit || '';
+    canvas.style.objectPosition = img.style.objectPosition || '';
+
+    // Keep canvas aspect-ratio rendering controlled by intrinsic dimensions.
+    if (!canvas.style.width) canvas.style.width = 'auto';
+    if (!canvas.style.height) canvas.style.height = 'auto';
+
+    // Hard clamp to viewport height so injected canvases always fit vertically.
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    canvas.style.maxHeight = viewportHeight > 0 ? `${viewportHeight}px` : '100vh';
+    canvas.style.maxWidth = '100%';
+}
+
+function ensureCanvas(parent, sourceImg) {
     let canvas = parent.querySelector('.ai-canvas');
     if (!canvas) {
         canvas = document.createElement('canvas');
@@ -62,6 +93,10 @@ function ensureCanvas(parent) {
         canvas.style.display = 'none';
         canvas.style.visibility = 'hidden';
         parent.appendChild(canvas);
+    }
+
+    if (sourceImg instanceof HTMLImageElement) {
+        syncCanvasPresentation(canvas, sourceImg);
     }
 
     return canvas;
@@ -93,6 +128,7 @@ function reconcile(container) {
 
         const canvas = parent.querySelector('.ai-canvas');
         if (hasRenderedCanvasForSource(img, canvas, sourceUrl)) {
+            syncCanvasPresentation(canvas, img);
             canvas.style.display = 'block';
             canvas.style.visibility = 'visible';
             hideOriginal(img);

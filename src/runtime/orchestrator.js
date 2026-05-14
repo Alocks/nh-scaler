@@ -304,6 +304,7 @@ async function processCurrentImage(container) {
 
     const currentCanvas = parent.querySelector('.ai-canvas');
     if (hasRenderedCanvasForSource(img, currentCanvas, sourceUrl)) {
+        syncCanvasPresentation(currentCanvas, img);
         hideOriginal(img);
         currentCanvas.style.display = 'block';
         currentCanvas.style.visibility = 'visible';
@@ -312,7 +313,7 @@ async function processCurrentImage(container) {
 
     const cachedBlob = await getProcessedCacheBlob(sourceUrl, runtimeSettings);
     if (cachedBlob) {
-        let canvas = ensureCanvas(parent);
+        let canvas = ensureCanvas(parent, img);
 
         try {
             const bitmap = await createImageBitmap(cachedBlob);
@@ -347,7 +348,7 @@ async function processCurrentImage(container) {
     }
     log('process:start', { sourceUrl, page, jobId, backend: getEffectiveBackend(runtimeSettings) });
 
-    let canvas = ensureCanvas(parent);
+    let canvas = ensureCanvas(parent, img);
 
     try {
         const tempImg = await loadSourceImage(sourceUrl);
