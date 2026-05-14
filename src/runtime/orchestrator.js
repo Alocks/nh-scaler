@@ -296,18 +296,16 @@ async function processCurrentImage(container) {
         return;
     }
 
-    const existingCanvas = parent.querySelector('.ai-canvas');
+    const existingCanvas = getCanvasForImage(img);
 
     if (existingCanvas && existingCanvas.dataset.aiSourceUrl && existingCanvas.dataset.aiSourceUrl !== sourceUrl) {
         existingCanvas.remove();
     }
 
-    const currentCanvas = parent.querySelector('.ai-canvas');
+    const currentCanvas = getCanvasForImage(img);
     if (hasRenderedCanvasForSource(img, currentCanvas, sourceUrl)) {
         syncCanvasPresentation(currentCanvas, img);
-        hideOriginal(img);
-        currentCanvas.style.display = 'block';
-        currentCanvas.style.visibility = 'visible';
+        reconcile(container);
         return;
     }
 
@@ -325,9 +323,7 @@ async function processCurrentImage(container) {
             img.dataset.aiProcessed = 'true';
             img.dataset.aiProcessedSrc = sourceUrl;
             canvas.dataset.aiSourceUrl = sourceUrl;
-            hideOriginal(img);
-            canvas.style.display = 'block';
-            canvas.style.visibility = 'visible';
+            reconcile(container);
             return;
         } catch (err) {
             await deleteProcessedCacheBlob(sourceUrl, runtimeSettings);

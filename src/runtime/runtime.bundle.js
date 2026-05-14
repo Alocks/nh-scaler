@@ -1835,6 +1835,7 @@ function resetBackendRuntimeState() {
 const IMAGE_LOAD_TIMEOUT_MS = 10000;
 const HARD_MAX_CANVAS_DIMENSION = 16384;
 let cachedMaxCanvasDimension = null;
+let canvasAnchorCounter = 0;
 
 function getMaxCanvasDimension() {
     if (cachedMaxCanvasDimension !== null) return cachedMaxCanvasDimension;
@@ -1914,17 +1915,58 @@ function syncCanvasPresentation(canvas, img) {
     canvas.style.maxWidth = '100%';
 }
 
+function ensureCanvasAnchorId(img) {
+    if (!(img instanceof HTMLImageElement)) return null;
+    if (!img.dataset.aiCanvasAnchorId) {
+        canvasAnchorCounter += 1;
+        img.dataset.aiCanvasAnchorId = `ai-anchor-${canvasAnchorCounter}`;
+    }
+    return img.dataset.aiCanvasAnchorId;
+}
+
+function getCanvasForImage(img) {
+    if (!(img instanceof HTMLImageElement)) return null;
+    const parent = img.parentElement;
+    if (!parent) return null;
+
+    const anchorId = ensureCanvasAnchorId(img);
+    if (!anchorId) return null;
+
+    return parent.querySelector(`.ai-canvas[data-ai-anchor-id="${anchorId}"]`);
+}
+
 function ensureCanvas(parent, sourceImg) {
-    let canvas = parent.querySelector('.ai-canvas');
+    const anchorId = ensureCanvasAnchorId(sourceImg);
+    let canvas = anchorId ? parent.querySelector(`.ai-canvas[data-ai-anchor-id="${anchorId}"]`) : null;
+
+    if (!canvas && sourceImg instanceof HTMLImageElement) {
+        const siblingCanvas = sourceImg.nextElementSibling;
+        if (
+            siblingCanvas instanceof HTMLCanvasElement &&
+            siblingCanvas.classList.contains('ai-canvas') &&
+            siblingCanvas.dataset.aiAnchorId === anchorId
+        ) {
+            canvas = siblingCanvas;
+        }
+    }
+
     if (!canvas) {
         canvas = document.createElement('canvas');
         canvas.width = 0;
         canvas.height = 0;
         canvas.className = 'ai-canvas';
+        if (anchorId) {
+            canvas.dataset.aiAnchorId = anchorId;
+        }
         canvas.style.pointerEvents = 'none';
         canvas.style.display = 'none';
         canvas.style.visibility = 'hidden';
-        parent.appendChild(canvas);
+
+        if (sourceImg instanceof HTMLImageElement && sourceImg.parentElement === parent) {
+            sourceImg.insertAdjacentElement('afterend', canvas);
+        } else {
+            parent.appendChild(canvas);
+        }
     }
 
     if (sourceImg instanceof HTMLImageElement) {
@@ -1950,6 +1992,7 @@ function reconcile(container) {
         return;
     }
 
+    const activeImg = selectForegroundImage(container);
     const imgs = container.querySelectorAll('img');
     for (const img of imgs) {
         const sourceUrl = img.currentSrc || img.src;
@@ -1958,12 +2001,17 @@ function reconcile(container) {
         const parent = img.parentElement;
         if (!parent) continue;
 
-        const canvas = parent.querySelector('.ai-canvas');
+        const canvas = getCanvasForImage(img);
         if (hasRenderedCanvasForSource(img, canvas, sourceUrl)) {
-            syncCanvasPresentation(canvas, img);
-            canvas.style.display = 'block';
-            canvas.style.visibility = 'visible';
-            hideOriginal(img);
+            if (img === activeImg) {
+                syncCanvasPresentation(canvas, img);
+                canvas.style.display = 'block';
+                canvas.style.visibility = 'visible';
+                hideOriginal(img);
+            } else {
+                canvas.style.display = 'none';
+                canvas.style.visibility = 'hidden';
+            }
         }
     }
 }
@@ -2081,7 +2129,8 @@ function queueBackgroundIfEligible(url, source) {
         return;
     }
 
-    const activeImg = getActiveContainer()?.querySelector('img');
+    const activeContainer = getActiveContainer();
+    const activeImg = activeContainer ? selectForegroundImage(activeContainer) : null;
     const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
     if (url === activeUrl) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'active-image' });
@@ -2135,7 +2184,8 @@ async function preprocessBackgroundImage(sourceUrl) {
         return;
     }
 
-    const activeImg = getActiveContainer()?.querySelector('img');
+    const activeContainer = getActiveContainer();
+    const activeImg = activeContainer ? selectForegroundImage(activeContainer) : null;
     const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
     if (sourceUrl === activeUrl) {
         logQueueEvent('bg-process:skip-foreground', sourceUrl);
@@ -2309,7 +2359,7 @@ function findAndProcessBackgroundImages() {
 
     const allImages = Array.from(document.querySelectorAll('img[src], img[data-src]'));
     const activeContainer = getActiveContainer();
-    const activeImg = activeContainer?.querySelector('img');
+    const activeImg = activeContainer ? selectForegroundImage(activeContainer) : null;
     const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
 
     let found = 0;
@@ -2333,14 +2383,23 @@ function findAndProcessBackgroundImages() {
 function scanPerformanceResources() {
     if (!performance?.getEntriesByType) return;
 
+    const activeAdapter = getActiveSourceAdapter(window.location.href);
+    const deferSeenUntilBackendReady = !backendPreferenceLoaded && activeAdapter?.id === 'mangadex';
+
     const resources = performance.getEntriesByType('resource');
     for (const entry of resources) {
         const url = entry?.name;
         if (typeof url !== 'string' || !url) continue;
         if (seenPerformanceResourceUrls.has(url)) continue;
-        seenPerformanceResourceUrls.add(url);
 
-        if (isSourceImageUrl(url)) {
+        const sourceImage = isSourceImageUrl(url);
+        if (deferSeenUntilBackendReady && sourceImage) {
+            queueBackgroundIfEligible(url, `perf:${entry.initiatorType || 'unknown'}`);
+            continue;
+        }
+
+        seenPerformanceResourceUrls.add(url);
+        if (sourceImage) {
             queueBackgroundIfEligible(url, `perf:${entry.initiatorType || 'unknown'}`);
         }
     }
@@ -2646,18 +2705,16 @@ async function processCurrentImage(container) {
         return;
     }
 
-    const existingCanvas = parent.querySelector('.ai-canvas');
+    const existingCanvas = getCanvasForImage(img);
 
     if (existingCanvas && existingCanvas.dataset.aiSourceUrl && existingCanvas.dataset.aiSourceUrl !== sourceUrl) {
         existingCanvas.remove();
     }
 
-    const currentCanvas = parent.querySelector('.ai-canvas');
+    const currentCanvas = getCanvasForImage(img);
     if (hasRenderedCanvasForSource(img, currentCanvas, sourceUrl)) {
         syncCanvasPresentation(currentCanvas, img);
-        hideOriginal(img);
-        currentCanvas.style.display = 'block';
-        currentCanvas.style.visibility = 'visible';
+        reconcile(container);
         return;
     }
 
@@ -2675,9 +2732,7 @@ async function processCurrentImage(container) {
             img.dataset.aiProcessed = 'true';
             img.dataset.aiProcessedSrc = sourceUrl;
             canvas.dataset.aiSourceUrl = sourceUrl;
-            hideOriginal(img);
-            canvas.style.display = 'block';
-            canvas.style.visibility = 'visible';
+            reconcile(container);
             return;
         } catch (err) {
             await deleteProcessedCacheBlob(sourceUrl, runtimeSettings);

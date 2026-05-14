@@ -48,7 +48,8 @@ function queueBackgroundIfEligible(url, source) {
         return;
     }
 
-    const activeImg = getActiveContainer()?.querySelector('img');
+    const activeContainer = getActiveContainer();
+    const activeImg = activeContainer ? selectForegroundImage(activeContainer) : null;
     const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
     if (url === activeUrl) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'active-image' });
@@ -102,7 +103,8 @@ async function preprocessBackgroundImage(sourceUrl) {
         return;
     }
 
-    const activeImg = getActiveContainer()?.querySelector('img');
+    const activeContainer = getActiveContainer();
+    const activeImg = activeContainer ? selectForegroundImage(activeContainer) : null;
     const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
     if (sourceUrl === activeUrl) {
         logQueueEvent('bg-process:skip-foreground', sourceUrl);
@@ -276,7 +278,7 @@ function findAndProcessBackgroundImages() {
 
     const allImages = Array.from(document.querySelectorAll('img[src], img[data-src]'));
     const activeContainer = getActiveContainer();
-    const activeImg = activeContainer?.querySelector('img');
+    const activeImg = activeContainer ? selectForegroundImage(activeContainer) : null;
     const activeUrl = activeImg?.isConnected ? (activeImg.currentSrc || activeImg.src) : null;
 
     let found = 0;
@@ -300,14 +302,23 @@ function findAndProcessBackgroundImages() {
 function scanPerformanceResources() {
     if (!performance?.getEntriesByType) return;
 
+    const activeAdapter = getActiveSourceAdapter(window.location.href);
+    const deferSeenUntilBackendReady = !backendPreferenceLoaded && activeAdapter?.id === 'mangadex';
+
     const resources = performance.getEntriesByType('resource');
     for (const entry of resources) {
         const url = entry?.name;
         if (typeof url !== 'string' || !url) continue;
         if (seenPerformanceResourceUrls.has(url)) continue;
-        seenPerformanceResourceUrls.add(url);
 
-        if (isSourceImageUrl(url)) {
+        const sourceImage = isSourceImageUrl(url);
+        if (deferSeenUntilBackendReady && sourceImage) {
+            queueBackgroundIfEligible(url, `perf:${entry.initiatorType || 'unknown'}`);
+            continue;
+        }
+
+        seenPerformanceResourceUrls.add(url);
+        if (sourceImage) {
             queueBackgroundIfEligible(url, `perf:${entry.initiatorType || 'unknown'}`);
         }
     }

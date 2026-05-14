@@ -3,6 +3,7 @@
 const IMAGE_LOAD_TIMEOUT_MS = 10000;
 const HARD_MAX_CANVAS_DIMENSION = 16384;
 let cachedMaxCanvasDimension = null;
+let canvasAnchorCounter = 0;
 
 function getMaxCanvasDimension() {
     if (cachedMaxCanvasDimension !== null) return cachedMaxCanvasDimension;
@@ -82,17 +83,58 @@ function syncCanvasPresentation(canvas, img) {
     canvas.style.maxWidth = '100%';
 }
 
+function ensureCanvasAnchorId(img) {
+    if (!(img instanceof HTMLImageElement)) return null;
+    if (!img.dataset.aiCanvasAnchorId) {
+        canvasAnchorCounter += 1;
+        img.dataset.aiCanvasAnchorId = `ai-anchor-${canvasAnchorCounter}`;
+    }
+    return img.dataset.aiCanvasAnchorId;
+}
+
+function getCanvasForImage(img) {
+    if (!(img instanceof HTMLImageElement)) return null;
+    const parent = img.parentElement;
+    if (!parent) return null;
+
+    const anchorId = ensureCanvasAnchorId(img);
+    if (!anchorId) return null;
+
+    return parent.querySelector(`.ai-canvas[data-ai-anchor-id="${anchorId}"]`);
+}
+
 function ensureCanvas(parent, sourceImg) {
-    let canvas = parent.querySelector('.ai-canvas');
+    const anchorId = ensureCanvasAnchorId(sourceImg);
+    let canvas = anchorId ? parent.querySelector(`.ai-canvas[data-ai-anchor-id="${anchorId}"]`) : null;
+
+    if (!canvas && sourceImg instanceof HTMLImageElement) {
+        const siblingCanvas = sourceImg.nextElementSibling;
+        if (
+            siblingCanvas instanceof HTMLCanvasElement &&
+            siblingCanvas.classList.contains('ai-canvas') &&
+            siblingCanvas.dataset.aiAnchorId === anchorId
+        ) {
+            canvas = siblingCanvas;
+        }
+    }
+
     if (!canvas) {
         canvas = document.createElement('canvas');
         canvas.width = 0;
         canvas.height = 0;
         canvas.className = 'ai-canvas';
+        if (anchorId) {
+            canvas.dataset.aiAnchorId = anchorId;
+        }
         canvas.style.pointerEvents = 'none';
         canvas.style.display = 'none';
         canvas.style.visibility = 'hidden';
-        parent.appendChild(canvas);
+
+        if (sourceImg instanceof HTMLImageElement && sourceImg.parentElement === parent) {
+            sourceImg.insertAdjacentElement('afterend', canvas);
+        } else {
+            parent.appendChild(canvas);
+        }
     }
 
     if (sourceImg instanceof HTMLImageElement) {
@@ -118,6 +160,7 @@ function reconcile(container) {
         return;
     }
 
+    const activeImg = selectForegroundImage(container);
     const imgs = container.querySelectorAll('img');
     for (const img of imgs) {
         const sourceUrl = img.currentSrc || img.src;
@@ -126,12 +169,17 @@ function reconcile(container) {
         const parent = img.parentElement;
         if (!parent) continue;
 
-        const canvas = parent.querySelector('.ai-canvas');
+        const canvas = getCanvasForImage(img);
         if (hasRenderedCanvasForSource(img, canvas, sourceUrl)) {
-            syncCanvasPresentation(canvas, img);
-            canvas.style.display = 'block';
-            canvas.style.visibility = 'visible';
-            hideOriginal(img);
+            if (img === activeImg) {
+                syncCanvasPresentation(canvas, img);
+                canvas.style.display = 'block';
+                canvas.style.visibility = 'visible';
+                hideOriginal(img);
+            } else {
+                canvas.style.display = 'none';
+                canvas.style.visibility = 'hidden';
+            }
         }
     }
 }
