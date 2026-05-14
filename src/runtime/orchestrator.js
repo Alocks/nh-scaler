@@ -40,7 +40,7 @@ function runBootDiagnostics(phase) {
         url: window.location.href,
         readyState: document.readyState,
         hasBody: !!document.body,
-        readerRoute: isNhentaiReaderPageUrl(window.location.href),
+        readerRoute: isReaderPageUrl(window.location.href),
         hooks: {
             fetch: !!window.fetch?.[NH_SCALER_HOOK_MARK],
             imageConstructor: !!window.Image?.[NH_SCALER_IMAGE_PROXY_MARK],
@@ -87,8 +87,8 @@ function resetProcessedRuntimeState() {
 function getQueueDebugData(sourceUrl) {
     return {
         sourceUrl,
-        page: getPageNumberFromUrl(sourceUrl),
-        pageKey: getGalleryPageKey(sourceUrl),
+        page: getSourcePageNumber(sourceUrl),
+        pageKey: getSourcePageKey(sourceUrl),
         queueSize: backgroundQueue.length,
         processedCount: processedPageKeys.size,
         inFlightCount: inFlightPageKeys.size,
@@ -146,7 +146,7 @@ function getRuntimeDiagnosticsSnapshot() {
         pageUrl: window.location.href,
         preferences,
         effectiveBackend,
-        readerRoute: isNhentaiReaderPageUrl(window.location.href),
+        readerRoute: isReaderPageUrl(window.location.href),
         foreground: isForegroundTab(),
         backendPreferenceLoaded,
         hooks: {
@@ -298,9 +298,9 @@ async function processCurrentImage(container) {
     img.dataset.aiJobId = jobId;
     img.dataset.aiProcessingSrc = sourceUrl;
     img.dataset.aiProcessed = 'true';
-    const page = getPageNumberFromUrl(sourceUrl);
+    const page = getSourcePageNumber(sourceUrl);
     if (page == null) {
-        log('process:page-missing', { sourceUrl, pageKey: getGalleryPageKey(sourceUrl), jobId });
+        log('process:page-missing', { sourceUrl, pageKey: getSourcePageKey(sourceUrl), jobId });
     }
     log('process:start', { sourceUrl, page, jobId, backend: getEffectiveBackend(runtimeSettings) });
 

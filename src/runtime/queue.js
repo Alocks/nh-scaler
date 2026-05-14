@@ -11,11 +11,11 @@ function getNextBackgroundQueueIndex() {
     if (backgroundQueue.length === 0) return -1;
 
     let bestIndex = 0;
-    let bestPage = getPageNumberFromUrl(backgroundQueue[0]);
+    let bestPage = getSourcePageNumber(backgroundQueue[0]);
     let bestRank = bestPage == null ? Number.POSITIVE_INFINITY : bestPage;
 
     for (let i = 1; i < backgroundQueue.length; i++) {
-        const page = getPageNumberFromUrl(backgroundQueue[i]);
+        const page = getSourcePageNumber(backgroundQueue[i]);
         const rank = page == null ? Number.POSITIVE_INFINITY : page;
         if (rank < bestRank) {
             bestRank = rank;
@@ -28,8 +28,8 @@ function getNextBackgroundQueueIndex() {
 }
 
 function queueBackgroundIfEligible(url, source) {
-    if (!isNhentaiReaderPageUrl(window.location.href)) return;
-    if (!isNhentaiGalleryUrl(url)) return;
+    if (!isReaderPageUrl(window.location.href)) return;
+    if (!isSourceImageUrl(url)) return;
 
     const runtimeSettings = getRuntimePreferenceSnapshot();
 
@@ -54,7 +54,7 @@ function queueBackgroundIfEligible(url, source) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'active-image' });
         return;
     }
-    const key = getGalleryPageKey(url);
+    const key = getSourcePageKey(url);
     if (key && processedPageKeys.has(key)) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'page-already-processed' });
         return;
@@ -63,7 +63,7 @@ function queueBackgroundIfEligible(url, source) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'page-in-flight' });
         return;
     }
-    if (key && backgroundQueue.some(u => getGalleryPageKey(u) === key)) {
+    if (key && backgroundQueue.some(u => getSourcePageKey(u) === key)) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'page-already-queued' });
         return;
     }
@@ -81,7 +81,7 @@ function queueBackgroundIfEligible(url, source) {
 }
 
 async function preprocessBackgroundImage(sourceUrl) {
-    if (!isNhentaiReaderPageUrl(window.location.href)) return;
+    if (!isReaderPageUrl(window.location.href)) return;
     const runtimeSettings = getRuntimePreferenceSnapshot();
     if (!isForegroundTab()) {
         logQueueEvent('bg-queue:skip', sourceUrl, { reason: 'tab-hidden-before-enqueue' });
@@ -126,7 +126,7 @@ async function processBackgroundQueue() {
     }
 
     backgroundQueueRunPromise = (async () => {
-    if (!isNhentaiReaderPageUrl(window.location.href)) {
+    if (!isReaderPageUrl(window.location.href)) {
         backgroundQueue = [];
         backgroundProcessing = false;
         return;
@@ -182,8 +182,8 @@ async function processBackgroundQueue() {
             continue;
         }
 
-        const page = getPageNumberFromUrl(sourceUrl);
-        const pageKey = getGalleryPageKey(sourceUrl);
+        const page = getSourcePageNumber(sourceUrl);
+        const pageKey = getSourcePageKey(sourceUrl);
         if (page == null) {
             logQueueEvent('bg-process:page-missing', sourceUrl);
         }
@@ -248,7 +248,7 @@ async function processBackgroundQueue() {
 }
 
 function findAndProcessBackgroundImages() {
-    if (!isNhentaiReaderPageUrl(window.location.href)) return;
+    if (!isReaderPageUrl(window.location.href)) return;
     if (!isForegroundTab()) return;
 
     const allImages = Array.from(document.querySelectorAll('img[src], img[data-src]'));
@@ -261,7 +261,7 @@ function findAndProcessBackgroundImages() {
         const srcUrl = img.currentSrc || img.src || img.dataset.src;
         if (!srcUrl || srcUrl === activeUrl) continue;
 
-        if (isNhentaiGalleryUrl(srcUrl)) {
+        if (isSourceImageUrl(srcUrl)) {
             queueBackgroundIfEligible(srcUrl, 'scan');
             found++;
 
@@ -284,7 +284,7 @@ function scanPerformanceResources() {
         if (seenPerformanceResourceUrls.has(url)) continue;
         seenPerformanceResourceUrls.add(url);
 
-        if (isNhentaiGalleryUrl(url)) {
+        if (isSourceImageUrl(url)) {
             queueBackgroundIfEligible(url, `perf:${entry.initiatorType || 'unknown'}`);
         }
     }

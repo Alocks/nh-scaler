@@ -1,4 +1,4 @@
-﻿// Dispatcher — adapter implementations are in src/runtime/adapters/
+﻿// Dispatcher — adapter implementations are in src/runtime/adapters/engines/
 
 const REQUIRED_ADAPTER_METHODS = ['isSupported', 'upscale', 'prewarm', 'reset'];
 

@@ -116,6 +116,22 @@ function getWebGpuAdapterDiagnostics() {
     return { capable, initialized, isSupported };
 }
 
+function createEngineAdapter(overrides = {}) {
+    if (typeof window.createBaseEngineAdapter === 'function') {
+        return window.createBaseEngineAdapter(overrides);
+    }
+
+    return {
+        isSupported: () => false,
+        upscale: async () => {
+            throw new Error('Base engine adapter: upscale() is not implemented');
+        },
+        prewarm: async () => {},
+        reset: () => {},
+        ...overrides
+    };
+}
+
 function getWebGpuRenderShaderModules(device) {
     if (!webgpuRenderBindGroupLayout) {
         webgpuRenderBindGroupLayout = device.createBindGroupLayout({
@@ -297,8 +313,8 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
     return modelUsed;
 }
 
-// Adapter pattern: WebGPU adapter
-window.WebGPUAdapter = {
+
+window.WebGPUAdapter = createEngineAdapter({
     isSupported: () => {
         if (!navigator?.gpu) return false;
         const lib = getWebGpuLibrary();
@@ -319,4 +335,4 @@ window.WebGPUAdapter = {
     },
     reset: resetWebGpuAdapterState,
     getDiagnosticsStatus: getWebGpuAdapterDiagnostics
-};
+});

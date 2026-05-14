@@ -193,12 +193,49 @@ webgpuModelReadyPromise = loadWebGpuModelPreference();
 webgpuScaleReadyPromise = loadWebGpuScalePreference();
 // --- END src/runtime/config.js ---
 
-// --- BEGIN src/runtime/url-utils.js ---
-// URL parsing and nhentai gallery detection with diagnostics
+// --- BEGIN src/runtime/sources/base_source.js ---
+// Template source adapter scaffold for adding a new website
+// Copy this file, rename identifiers, and implement the three adapter methods.
 
+const TEMPLATE_SOURCE_ID = 'template-site';
+
+const templateSiteSourceAdapter = {
+    id: TEMPLATE_SOURCE_ID,
+    supportsUrl(_url) {
+        // Return true when the URL belongs to your target website.
+        return false;
+    },
+    isReaderPageUrl(_url) {
+        // Return true only on pages where image upscaling should run.
+        return false;
+    },
+    parseImageUrl(_url) {
+        // Return null for non-matching image URLs.
+        // For matching URLs, return an object with at least:
+        // { page: Number, pageKey: String }
+        return null;
+    }
+};
+
+if (!Array.isArray(window.NHScalerSourceAdapters)) {
+    window.NHScalerSourceAdapters = [];
+}
+
+const existingTemplateAdapterIndex = window.NHScalerSourceAdapters.findIndex((adapter) => adapter?.id === TEMPLATE_SOURCE_ID);
+if (existingTemplateAdapterIndex >= 0) {
+    window.NHScalerSourceAdapters[existingTemplateAdapterIndex] = templateSiteSourceAdapter;
+} else {
+    window.NHScalerSourceAdapters.push(templateSiteSourceAdapter);
+}
+// --- END src/runtime/sources/base_source.js ---
+
+// --- BEGIN src/runtime/sources/nhentai.js ---
+// Source adapter for nhentai URL and reader/image detection
+
+const NHENTAI_SOURCE_ID = 'nhentai';
 const loggedNhentaiParseIssues = new Set();
 
-function parseUrlSafely(url) {
+function parseNhentaiUrlSafely(url) {
     if (typeof url !== 'string' || !url) return null;
     try {
         return new URL(url, window.location.href);
@@ -211,29 +248,6 @@ function isNhentaiHost(hostname) {
     return typeof hostname === 'string' && /(^|\.)nhentai\.net$/i.test(hostname);
 }
 
-function parseNhentaiGalleryImageUrl(url) {
-    const parsed = parseUrlSafely(url);
-    if (!parsed || !isNhentaiHost(parsed.hostname)) return null;
-
-    const match = parsed.pathname.match(/^\/galleries\/(\d+)\/(\d+)\.(webp|jpe?g|png)$/i);
-    if (!match) return null;
-
-    const galleryId = match[1];
-    const page = Number(match[2]);
-    if (!Number.isFinite(page)) {
-        logNhentaiParseIssue('page-number-invalid', url, { rawPage: match[2] });
-        return null;
-    }
-
-    return {
-        parsedUrl: parsed,
-        galleryId,
-        page,
-        extension: match[3].toLowerCase(),
-        pageKey: `${galleryId}/${page}`
-    };
-}
-
 function logNhentaiParseIssue(kind, url, extra = {}) {
     if (typeof url !== 'string' || !url) return;
 
@@ -242,26 +256,100 @@ function logNhentaiParseIssue(kind, url, extra = {}) {
     loggedNhentaiParseIssues.add(issueKey);
 
     if (typeof window.NHScalerLog === 'function') {
-        window.NHScalerLog(`url:${kind}`, { url, ...extra });
+        window.NHScalerLog(`url:${kind}`, { source: NHENTAI_SOURCE_ID, url, ...extra });
     }
 }
 
-function isNhentaiReaderPageUrl(url) {
-    const parsed = parseUrlSafely(url);
-    if (!parsed || !isNhentaiHost(parsed.hostname)) return false;
-    return /^\/g\/\d+\/\d+\/?$/i.test(parsed.pathname);
+const nhentaiSourceAdapter = {
+    id: NHENTAI_SOURCE_ID,
+    supportsUrl(url) {
+        const parsed = parseNhentaiUrlSafely(url);
+        return !!parsed && isNhentaiHost(parsed.hostname);
+    },
+    isReaderPageUrl(url) {
+        const parsed = parseNhentaiUrlSafely(url);
+        if (!parsed || !isNhentaiHost(parsed.hostname)) return false;
+        return /^\/g\/\d+\/\d+\/?$/i.test(parsed.pathname);
+    },
+    parseImageUrl(url) {
+        const parsed = parseNhentaiUrlSafely(url);
+        if (!parsed || !isNhentaiHost(parsed.hostname)) return null;
+
+        const match = parsed.pathname.match(/^\/galleries\/(\d+)\/(\d+)\.(webp|jpe?g|png)$/i);
+        if (!match) return null;
+
+        const galleryId = match[1];
+        const page = Number(match[2]);
+        if (!Number.isFinite(page)) {
+            logNhentaiParseIssue('page-number-invalid', url, { rawPage: match[2] });
+            return null;
+        }
+
+        return {
+            parsedUrl: parsed,
+            galleryId,
+            page,
+            extension: match[3].toLowerCase(),
+            pageKey: `${galleryId}/${page}`
+        };
+    }
+};
+
+if (!Array.isArray(window.NHScalerSourceAdapters)) {
+    window.NHScalerSourceAdapters = [];
 }
 
-function isNhentaiGalleryUrl(url) {
-    return !!parseNhentaiGalleryImageUrl(url);
+const existingNhentaiAdapterIndex = window.NHScalerSourceAdapters.findIndex((adapter) => adapter?.id === NHENTAI_SOURCE_ID);
+if (existingNhentaiAdapterIndex >= 0) {
+    window.NHScalerSourceAdapters[existingNhentaiAdapterIndex] = nhentaiSourceAdapter;
+} else {
+    window.NHScalerSourceAdapters.push(nhentaiSourceAdapter);
+}
+// --- END src/runtime/sources/nhentai.js ---
+
+// --- BEGIN src/runtime/url-utils.js ---
+// Source adapter dispatch helpers
+
+function getRegisteredSourceAdapters() {
+    return Array.isArray(window.NHScalerSourceAdapters) ? window.NHScalerSourceAdapters : [];
 }
 
-function getGalleryPageKey(url) {
-    return parseNhentaiGalleryImageUrl(url)?.pageKey || null;
+function getActiveSourceAdapter(pageUrl = window.location.href) {
+    const adapters = getRegisteredSourceAdapters();
+    return adapters.find((adapter) => typeof adapter?.isReaderPageUrl === 'function' && adapter.isReaderPageUrl(pageUrl)) || null;
 }
 
-function getPageNumberFromUrl(url) {
-    return parseNhentaiGalleryImageUrl(url)?.page || null;
+function getSourceAdapterForImageUrl(url) {
+    const activeAdapter = getActiveSourceAdapter(window.location.href);
+    if (activeAdapter && typeof activeAdapter?.parseImageUrl === 'function') {
+        const parsed = activeAdapter.parseImageUrl(url);
+        if (parsed) return { adapter: activeAdapter, parsed };
+    }
+
+    const adapters = getRegisteredSourceAdapters();
+    for (const adapter of adapters) {
+        if (adapter === activeAdapter || typeof adapter?.parseImageUrl !== 'function') continue;
+        const parsed = adapter.parseImageUrl(url);
+        if (parsed) return { adapter, parsed };
+    }
+
+    return null;
+}
+
+function isReaderPageUrl(url) {
+    return !!getActiveSourceAdapter(url);
+}
+
+function isSourceImageUrl(url) {
+    return !!getSourceAdapterForImageUrl(url);
+}
+
+function getSourcePageKey(url) {
+    return getSourceAdapterForImageUrl(url)?.parsed?.pageKey || null;
+}
+
+function getSourcePageNumber(url) {
+    return getSourceAdapterForImageUrl(url)?.parsed?.page || null;
 }
 // --- END src/runtime/url-utils.js ---
 
@@ -514,7 +602,31 @@ async function clearProcessedCache() {
 }
 // --- END src/runtime/cache.js ---
 
-// --- BEGIN src/runtime/adapters/webgl.js ---
+// --- BEGIN src/runtime/adapters/engines/base_engine.js ---
+// Base engine adapter scaffold for implementing additional upscale backends.
+// New engines can clone this shape and replace each placeholder method.
+
+function createBaseEngineAdapter(overrides = {}) {
+    const adapter = {
+        isSupported: () => false,
+        upscale: async () => {
+            throw new Error('Base engine adapter: upscale() is not implemented');
+        },
+        prewarm: async () => {},
+        reset: () => {}
+    };
+
+    return {
+        ...adapter,
+        ...overrides
+    };
+}
+
+// Expose the scaffold factory so future engine files can reuse it.
+window.createBaseEngineAdapter = createBaseEngineAdapter;
+// --- END src/runtime/adapters/engines/base_engine.js ---
+
+// --- BEGIN src/runtime/adapters/engines/webgl.js ---
 // WebGL adapter using anime4k-webgl library
 
 /** @type {any} */
@@ -602,8 +714,24 @@ function getWebGlAdapterDiagnostics() {
     return { capable, initialized, isSupported };
 }
 
+function createEngineAdapter(overrides = {}) {
+    if (typeof window.createBaseEngineAdapter === 'function') {
+        return window.createBaseEngineAdapter(overrides);
+    }
+
+    return {
+        isSupported: () => false,
+        upscale: async () => {
+            throw new Error('Base engine adapter: upscale() is not implemented');
+        },
+        prewarm: async () => {},
+        reset: () => {},
+        ...overrides
+    };
+}
+
 // Adapter pattern: WebGL adapter
-window.WebGLAdapter = {
+window.WebGLAdapter = createEngineAdapter({
     isSupported: () => {
         return scaler && scaler.supported === true;
     },
@@ -623,10 +751,10 @@ window.WebGLAdapter = {
     },
     reset: resetWebGlAdapterState,
     getDiagnosticsStatus: getWebGlAdapterDiagnostics
-};
-// --- END src/runtime/adapters/webgl.js ---
+});
+// --- END src/runtime/adapters/engines/webgl.js ---
 
-// --- BEGIN src/runtime/adapters/webgpu.js ---
+// --- BEGIN src/runtime/adapters/engines/webgpu.js ---
 // WebGPU adapter using anime4k-webgpu library
 
 let webgpuDevicePromise = null;
@@ -743,6 +871,22 @@ function getWebGpuAdapterDiagnostics() {
     );
 
     return { capable, initialized, isSupported };
+}
+
+function createEngineAdapter(overrides = {}) {
+    if (typeof window.createBaseEngineAdapter === 'function') {
+        return window.createBaseEngineAdapter(overrides);
+    }
+
+    return {
+        isSupported: () => false,
+        upscale: async () => {
+            throw new Error('Base engine adapter: upscale() is not implemented');
+        },
+        prewarm: async () => {},
+        reset: () => {},
+        ...overrides
+    };
 }
 
 function getWebGpuRenderShaderModules(device) {
@@ -927,7 +1071,7 @@ async function runAnime4KWebGpu(tempImg, canvas, runtimeSettings = getRuntimePre
 }
 
 // Adapter pattern: WebGPU adapter
-window.WebGPUAdapter = {
+window.WebGPUAdapter = createEngineAdapter({
     isSupported: () => {
         if (!navigator?.gpu) return false;
         const lib = getWebGpuLibrary();
@@ -948,11 +1092,11 @@ window.WebGPUAdapter = {
     },
     reset: resetWebGpuAdapterState,
     getDiagnosticsStatus: getWebGpuAdapterDiagnostics
-};
-// --- END src/runtime/adapters/webgpu.js ---
+});
+// --- END src/runtime/adapters/engines/webgpu.js ---
 
 // --- BEGIN src/runtime/engine.js ---
-﻿// Dispatcher — adapter implementations are in src/runtime/adapters/
+﻿// Dispatcher — adapter implementations are in src/runtime/adapters/engines/
 
 const REQUIRED_ADAPTER_METHODS = ['isSupported', 'upscale', 'prewarm', 'reset'];
 
@@ -1196,11 +1340,11 @@ function getNextBackgroundQueueIndex() {
     if (backgroundQueue.length === 0) return -1;
 
     let bestIndex = 0;
-    let bestPage = getPageNumberFromUrl(backgroundQueue[0]);
+    let bestPage = getSourcePageNumber(backgroundQueue[0]);
     let bestRank = bestPage == null ? Number.POSITIVE_INFINITY : bestPage;
 
     for (let i = 1; i < backgroundQueue.length; i++) {
-        const page = getPageNumberFromUrl(backgroundQueue[i]);
+        const page = getSourcePageNumber(backgroundQueue[i]);
         const rank = page == null ? Number.POSITIVE_INFINITY : page;
         if (rank < bestRank) {
             bestRank = rank;
@@ -1213,8 +1357,8 @@ function getNextBackgroundQueueIndex() {
 }
 
 function queueBackgroundIfEligible(url, source) {
-    if (!isNhentaiReaderPageUrl(window.location.href)) return;
-    if (!isNhentaiGalleryUrl(url)) return;
+    if (!isReaderPageUrl(window.location.href)) return;
+    if (!isSourceImageUrl(url)) return;
 
     const runtimeSettings = getRuntimePreferenceSnapshot();
 
@@ -1239,7 +1383,7 @@ function queueBackgroundIfEligible(url, source) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'active-image' });
         return;
     }
-    const key = getGalleryPageKey(url);
+    const key = getSourcePageKey(url);
     if (key && processedPageKeys.has(key)) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'page-already-processed' });
         return;
@@ -1248,7 +1392,7 @@ function queueBackgroundIfEligible(url, source) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'page-in-flight' });
         return;
     }
-    if (key && backgroundQueue.some(u => getGalleryPageKey(u) === key)) {
+    if (key && backgroundQueue.some(u => getSourcePageKey(u) === key)) {
         logQueueEvent('bg-queue:skip', url, { source, reason: 'page-already-queued' });
         return;
     }
@@ -1266,7 +1410,7 @@ function queueBackgroundIfEligible(url, source) {
 }
 
 async function preprocessBackgroundImage(sourceUrl) {
-    if (!isNhentaiReaderPageUrl(window.location.href)) return;
+    if (!isReaderPageUrl(window.location.href)) return;
     const runtimeSettings = getRuntimePreferenceSnapshot();
     if (!isForegroundTab()) {
         logQueueEvent('bg-queue:skip', sourceUrl, { reason: 'tab-hidden-before-enqueue' });
@@ -1311,7 +1455,7 @@ async function processBackgroundQueue() {
     }
 
     backgroundQueueRunPromise = (async () => {
-    if (!isNhentaiReaderPageUrl(window.location.href)) {
+    if (!isReaderPageUrl(window.location.href)) {
         backgroundQueue = [];
         backgroundProcessing = false;
         return;
@@ -1367,8 +1511,8 @@ async function processBackgroundQueue() {
             continue;
         }
 
-        const page = getPageNumberFromUrl(sourceUrl);
-        const pageKey = getGalleryPageKey(sourceUrl);
+        const page = getSourcePageNumber(sourceUrl);
+        const pageKey = getSourcePageKey(sourceUrl);
         if (page == null) {
             logQueueEvent('bg-process:page-missing', sourceUrl);
         }
@@ -1433,7 +1577,7 @@ async function processBackgroundQueue() {
 }
 
 function findAndProcessBackgroundImages() {
-    if (!isNhentaiReaderPageUrl(window.location.href)) return;
+    if (!isReaderPageUrl(window.location.href)) return;
     if (!isForegroundTab()) return;
 
     const allImages = Array.from(document.querySelectorAll('img[src], img[data-src]'));
@@ -1446,7 +1590,7 @@ function findAndProcessBackgroundImages() {
         const srcUrl = img.currentSrc || img.src || img.dataset.src;
         if (!srcUrl || srcUrl === activeUrl) continue;
 
-        if (isNhentaiGalleryUrl(srcUrl)) {
+        if (isSourceImageUrl(srcUrl)) {
             queueBackgroundIfEligible(srcUrl, 'scan');
             found++;
 
@@ -1469,7 +1613,7 @@ function scanPerformanceResources() {
         if (seenPerformanceResourceUrls.has(url)) continue;
         seenPerformanceResourceUrls.add(url);
 
-        if (isNhentaiGalleryUrl(url)) {
+        if (isSourceImageUrl(url)) {
             queueBackgroundIfEligible(url, `perf:${entry.initiatorType || 'unknown'}`);
         }
     }
@@ -1519,7 +1663,7 @@ function runBootDiagnostics(phase) {
         url: window.location.href,
         readyState: document.readyState,
         hasBody: !!document.body,
-        readerRoute: isNhentaiReaderPageUrl(window.location.href),
+        readerRoute: isReaderPageUrl(window.location.href),
         hooks: {
             fetch: !!window.fetch?.[NH_SCALER_HOOK_MARK],
             imageConstructor: !!window.Image?.[NH_SCALER_IMAGE_PROXY_MARK],
@@ -1566,8 +1710,8 @@ function resetProcessedRuntimeState() {
 function getQueueDebugData(sourceUrl) {
     return {
         sourceUrl,
-        page: getPageNumberFromUrl(sourceUrl),
-        pageKey: getGalleryPageKey(sourceUrl),
+        page: getSourcePageNumber(sourceUrl),
+        pageKey: getSourcePageKey(sourceUrl),
         queueSize: backgroundQueue.length,
         processedCount: processedPageKeys.size,
         inFlightCount: inFlightPageKeys.size,
@@ -1625,7 +1769,7 @@ function getRuntimeDiagnosticsSnapshot() {
         pageUrl: window.location.href,
         preferences,
         effectiveBackend,
-        readerRoute: isNhentaiReaderPageUrl(window.location.href),
+        readerRoute: isReaderPageUrl(window.location.href),
         foreground: isForegroundTab(),
         backendPreferenceLoaded,
         hooks: {
@@ -1777,9 +1921,9 @@ async function processCurrentImage(container) {
     img.dataset.aiJobId = jobId;
     img.dataset.aiProcessingSrc = sourceUrl;
     img.dataset.aiProcessed = 'true';
-    const page = getPageNumberFromUrl(sourceUrl);
+    const page = getSourcePageNumber(sourceUrl);
     if (page == null) {
-        log('process:page-missing', { sourceUrl, pageKey: getGalleryPageKey(sourceUrl), jobId });
+        log('process:page-missing', { sourceUrl, pageKey: getSourcePageKey(sourceUrl), jobId });
     }
     log('process:start', { sourceUrl, page, jobId, backend: getEffectiveBackend(runtimeSettings) });
 

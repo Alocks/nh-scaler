@@ -85,8 +85,24 @@ function getWebGlAdapterDiagnostics() {
     return { capable, initialized, isSupported };
 }
 
-// Adapter pattern: WebGL adapter
-window.WebGLAdapter = {
+function createEngineAdapter(overrides = {}) {
+    if (typeof window.createBaseEngineAdapter === 'function') {
+        return window.createBaseEngineAdapter(overrides);
+    }
+
+    return {
+        isSupported: () => false,
+        upscale: async () => {
+            throw new Error('Base engine adapter: upscale() is not implemented');
+        },
+        prewarm: async () => {},
+        reset: () => {},
+        ...overrides
+    };
+}
+
+
+window.WebGLAdapter = createEngineAdapter({
     isSupported: () => {
         return scaler && scaler.supported === true;
     },
@@ -106,4 +122,4 @@ window.WebGLAdapter = {
     },
     reset: resetWebGlAdapterState,
     getDiagnosticsStatus: getWebGlAdapterDiagnostics
-};
+});

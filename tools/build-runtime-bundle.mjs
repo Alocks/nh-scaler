@@ -8,10 +8,13 @@ const repoRoot = resolve(__dirname, '..');
 
 const runtimeSourceFiles = [
   'src/runtime/config.js',
+  'src/runtime/sources/base_source.js',
+  'src/runtime/sources/nhentai.js',
   'src/runtime/url-utils.js',
   'src/runtime/cache.js',
-  'src/runtime/adapters/webgl.js',
-  'src/runtime/adapters/webgpu.js',
+  'src/runtime/adapters/engines/base_engine.js',
+  'src/runtime/adapters/engines/webgl.js',
+  'src/runtime/adapters/engines/webgpu.js',
   'src/runtime/engine.js',
   'src/runtime/dom.js',
   'src/runtime/queue.js',
@@ -22,22 +25,34 @@ const outputFile = 'src/runtime/runtime.bundle.js';
 const shouldCheck = process.argv.includes('--check');
 
 async function listRuntimeSourceFilesOnDisk() {
-  const runtimeDir = resolve(repoRoot, 'src/runtime');
-  const adaptersDir = resolve(runtimeDir, 'adapters');
+  const runtimeRoot = resolve(repoRoot, 'src/runtime');
 
-  const runtimeEntries = await readdir(runtimeDir, { withFileTypes: true });
-  const adapterEntries = await readdir(adaptersDir, { withFileTypes: true });
+  async function collectJsFiles(absoluteDir, relativeDir = 'src/runtime') {
+    const entries = await readdir(absoluteDir, { withFileTypes: true });
+    const files = [];
 
-  const runtimeFiles = runtimeEntries
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
-    .map((entry) => `src/runtime/${entry.name}`)
-    .filter((path) => path !== outputFile);
+    for (const entry of entries) {
+      if (entry.name === '_metadata') continue;
 
-  const adapterFiles = adapterEntries
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
-    .map((entry) => `src/runtime/adapters/${entry.name}`);
+      const absolutePath = resolve(absoluteDir, entry.name);
+      const relativePath = `${relativeDir}/${entry.name}`;
 
-  return new Set([...runtimeFiles, ...adapterFiles]);
+      if (entry.isDirectory()) {
+        const nested = await collectJsFiles(absolutePath, relativePath);
+        files.push(...nested);
+        continue;
+      }
+
+      if (entry.isFile() && entry.name.endsWith('.js') && relativePath !== outputFile) {
+        files.push(relativePath);
+      }
+    }
+
+    return files;
+  }
+
+  const discoveredFiles = await collectJsFiles(runtimeRoot);
+  return new Set(discoveredFiles);
 }
 
 async function verifyRuntimeSourceCoverage() {
